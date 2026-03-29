@@ -1,6 +1,6 @@
-# King IPTV — Portuguese strings
+# King IPTV — Portuguese (Brazil) strings
 # Kodi Media Center language file
-# Locale: Portuguese (pt-BR)
+# Locale: Portuguese Brazil (pt_BR)
 
 msgid ""
 msgstr ""
@@ -10,12 +10,12 @@ msgstr ""
 "PO-Revision-Date: 2026-03-25 00:00+0000\n"
 "Last-Translator: \n"
 "Language-Team: \n"
-"Language: pt-BR\n"
+"Language: pt_BR\n"
 "MIME-Version: 1.0\n"
 "Content-Type: text/plain; charset=UTF-8\n"
 "Content-Transfer-Encoding: 8bit\n"
 
-# ── Main menu ────────────────────────────────────────────────────────────────
+# ── Menu principal ───────────────────────────────────────────────────────────
 
 msgctxt "#32000"
 msgid "IPTV Lists"
@@ -41,11 +41,11 @@ msgctxt "#32005"
 msgid "Settings"
 msgstr "Configurações"
 
-# ── Movies menu ──────────────────────────────────────────────────────────────
+# ── Menu Filmes ──────────────────────────────────────────────────────────────
 
 msgctxt "#32006"
 msgid "Search Movie"
-msgstr "Buscar Filme"
+msgstr "Pesquisar Filme"
 
 msgctxt "#32007"
 msgid "Popular Movies"
@@ -55,11 +55,11 @@ msgctxt "#32008"
 msgid "Trending Movies"
 msgstr "Filmes em Alta"
 
-# ── Series menu ──────────────────────────────────────────────────────────────
+# ── Menu Séries ──────────────────────────────────────────────────────────────
 
 msgctxt "#32009"
 msgid "Search TV Show"
-msgstr "Buscar Série"
+msgstr "Pesquisar Série"
 
 msgctxt "#32010"
 msgid "Popular TV Shows"
@@ -69,7 +69,7 @@ msgctxt "#32011"
 msgid "Trending TV Shows"
 msgstr "Séries em Alta"
 
-# ── Pagination & status ──────────────────────────────────────────────────────
+# ── Paginação & status ───────────────────────────────────────────────────────
 
 msgctxt "#32012"
 msgid "Next Page"
@@ -89,19 +89,19 @@ msgstr "Opção indisponível"
 
 msgctxt "#32016"
 msgid "Stream Unavailable"
-msgstr "Stream Indisponível"
+msgstr "Stream indisponível"
 
 msgctxt "#32017"
 msgid "No radios"
-msgstr "Nenhuma rádio"
+msgstr "Nenhuma rádio encontrada"
 
 msgctxt "#32018"
 msgid "No channels"
-msgstr "Nenhum canal"
+msgstr "Nenhum canal encontrado"
 
 msgctxt "#32020"
 msgid "Choose Portuguese audio in settings"
-msgstr "Escolha o áudio em português nas configurações"
+msgstr "Escolha o áudio em Português nas configurações"
 
 msgctxt "#32021"
 msgid "Error: Invalid parameters"
@@ -123,7 +123,7 @@ msgctxt "#32029"
 msgid "IPTV Channel"
 msgstr "Canal IPTV"
 
-# ── Auto-update ──────────────────────────────────────────────────────────────
+# ── Atualização automática ───────────────────────────────────────────────────
 
 msgctxt "#32023"
 msgid "Updating..."
@@ -139,13 +139,13 @@ msgstr "Erro na atualização automática"
 
 msgctxt "#32026"
 msgid "Update error"
-msgstr "Erro na atualização"
+msgstr "Erro de atualização"
 
 # ── Loading dialog ───────────────────────────────────────────────────────────
 
 msgctxt "#32030"
 msgid "Searching at the source"
-msgstr "Buscando na fonte"
+msgstr "Procurando na fonte"
 
 msgctxt "#32031"
 msgid "Resolving the link"
@@ -155,19 +155,19 @@ msgstr "Resolvendo o link"
 
 msgctxt "#32100"
 msgid "Up Next"
-msgstr "Próximo Episódio"
+msgstr "A Seguir"
 
 msgctxt "#32101"
 msgid "Enable Up Next"
-msgstr "Ativar Próximo Episódio"
+msgstr "Ativar A Seguir"
 
 msgctxt "#32102"
 msgid "Show notification when remaining (seconds)"
-msgstr "Exibir notificação com tempo restante (segundos)"
+msgstr "Mostrar notificação quando restar (segundos)"
 
 msgctxt "#32103"
 msgid "Countdown timer duration (seconds)"
-msgstr "Duração do contador (segundos)"
+msgstr "Duração da contagem regressiva (segundos)"
 
 msgctxt "#32107"
 msgid "Next Episode"
@@ -185,11 +185,11 @@ msgstr "Cancelar"
 
 msgctxt "#32110"
 msgid "Skip Intro"
-msgstr "Pular Introdução"
+msgstr "Pular Abertura"
 
 msgctxt "#32111"
 msgid "Enable Skip Intro"
-msgstr "Ativar Pular Introdução"
+msgstr "Ativar Pular Abertura"
 
 msgctxt "#32113"
 msgid "Skip automatically (no confirmation)"
@@ -197,17 +197,17 @@ msgstr "Pular automaticamente (sem confirmação)"
 
 msgctxt "#32114"
 msgid "Countdown seconds"
-msgstr "Segundos do contador"
+msgstr "Segundos de contagem"
 
 msgctxt "#32202"
 msgid "Skip Intro ({0}s)"
-msgstr "Pular Introdução ({0}s)"
+msgstr "Pular Abertura ({0}s)"
 
 msgctxt "#32205"
 msgid "INTRO"
-msgstr "INTRO"
+msgstr "ABERTURA"
 
-# ── Watched ──────────────────────────────────────────────────────────────────
+# ── Assistido ────────────────────────────────────────────────────────────────
 
 msgctxt "#32032"
 msgid "Mark as watched"
@@ -217,7 +217,7 @@ msgctxt "#32033"
 msgid "Mark as unwatched"
 msgstr "Desmarcar como assistido"
 
-# ── Database ─────────────────────────────────────────────────────────────────
+# ── Banco de dados ───────────────────────────────────────────────────────────
 
 msgctxt "#33000"
 msgid "Database"
@@ -229,7 +229,7 @@ msgstr "Ativar limpeza automática"
 
 msgctxt "#33002"
 msgid "Days before deleting the database"
-msgstr "Dias antes de excluir o banco de dados"
+msgstr "Dias para excluir o banco de dados"
 
 msgctxt "#33003"
 msgid "Delete database"
