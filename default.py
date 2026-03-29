@@ -508,7 +508,7 @@ def open_episodes(param):
             'original_name': original_name, 'episode_title': name,
             'mediatype': 'episode', 'playable': True,
             'playcount': 1 if is_watched else 0,
-        }, destiny='/play_resolve_series',
+        }, destiny='/play_resolve_series', folder=False,
            context_menu=[(ctx_label, mark_url)])
     end()
     setview('List')
@@ -611,17 +611,13 @@ def play_resolve_series(param):
         headers = result.split('|', 1)[1] if '|' in result else ''
         is_file = url.lower().endswith(('.mp4', '.mkv', '.avi', '.mov', '.webm', '.ts'))
 
-        play_url = url
-
         li = xbmcgui.ListItem(label=ep_title, path=url)
         li.setArt({'thumb': iconimage, 'icon': iconimage, 'fanart': fanart or iconimage})
         li.setContentLookup(False)
-
         if is_file:
             li.setMimeType('video/mp4')
             if headers:
-                play_url = f'{url}|{headers}&User-Agent=Mozilla/5.0Referer=https://google.com'
-                li.setPath(play_url)
+                li.setPath(f'{url}|{headers}&User-Agent=Mozilla/5.0Referer=https://google.com')
         else:
             li.setProperty('inputstream', 'inputstream.adaptive')
             li.setProperty('inputstream.adaptive.manifest_type', 'hls')
@@ -649,7 +645,7 @@ def play_resolve_series(param):
             })
 
         notify(getString(32020))
-        xbmc.Player().play(play_url, li)
+        xbmcplugin.setResolvedUrl(int(sys.argv[1]), True, li)
         loading_manager.close()
 
         playlist = xbmc.PlayList(xbmc.PLAYLIST_VIDEO)
