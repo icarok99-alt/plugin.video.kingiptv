@@ -497,14 +497,19 @@ def open_episodes(param):
     setcontent('episodes')
     for ep_num, name, img, fanart, desc in items:
         name_full = '{}x{} - {}'.format(season, str(ep_num).zfill(2), name)
+        is_watched = int(ep_num) in watched_set
+        ctx_label = '[B]{}[/B]'.format(getString(32033) if is_watched else getString(32032))
+        mark_url = 'RunScript(plugin.video.kingiptv,imdbnumber={}&season_num={}&episode_num={})'.format(
+            imdb_id, season, ep_num)
         addMenuItem({
             'name': name_full, 'description': desc, 'iconimage': img,
             'fanart': fanart, 'imdbnumber': imdb_id, 'season_num': season,
             'episode_num': str(ep_num), 'serie_name': serie_name,
             'original_name': original_name, 'episode_title': name,
             'mediatype': 'episode', 'playable': True,
-            'playcount': 1 if int(ep_num) in watched_set else 0,
-        }, destiny='/play_resolve_series', folder=False)
+            'playcount': 1 if is_watched else 0,
+        }, destiny='/play_resolve_series',
+           context_menu=[(ctx_label, mark_url)])
     end()
     setview('List')
 

@@ -45,7 +45,7 @@ msgstr "Configurações"
 
 msgctxt "#32006"
 msgid "Search Movie"
-msgstr "Buscar Filme"
+msgstr "Pesquisar Filme"
 
 msgctxt "#32007"
 msgid "Popular Movies"
@@ -59,7 +59,7 @@ msgstr "Filmes em Alta"
 
 msgctxt "#32009"
 msgid "Search TV Show"
-msgstr "Buscar Série"
+msgstr "Pesquisar Série"
 
 msgctxt "#32010"
 msgid "Popular TV Shows"
@@ -101,7 +101,7 @@ msgstr "Nenhum canal encontrado"
 
 msgctxt "#32020"
 msgid "Choose Portuguese audio in settings"
-msgstr "Escolha o áudio em Português nas configurações"
+msgstr "Escolha o áudio em português nas configurações"
 
 msgctxt "#32021"
 msgid "Error: Invalid parameters"
@@ -139,13 +139,13 @@ msgstr "Erro na atualização automática"
 
 msgctxt "#32026"
 msgid "Update error"
-msgstr "Erro de atualização"
+msgstr "Erro na atualização"
 
 # ── Loading dialog ───────────────────────────────────────────────────────────
 
 msgctxt "#32030"
 msgid "Searching at the source"
-msgstr "Buscando na fonte"
+msgstr "Procurando na fonte"
 
 msgctxt "#32031"
 msgid "Resolving the link"
@@ -155,15 +155,15 @@ msgstr "Resolvendo o link"
 
 msgctxt "#32100"
 msgid "Up Next"
-msgstr "A Seguir"
+msgstr "Próximo episódio"
 
 msgctxt "#32101"
 msgid "Enable Up Next"
-msgstr "Ativar A Seguir"
+msgstr "Ativar próximo episódio"
 
 msgctxt "#32102"
 msgid "Show notification when remaining (seconds)"
-msgstr "Mostrar notificação quando restar (segundos)"
+msgstr "Exibir notificação com tempo restante (segundos)"
 
 msgctxt "#32103"
 msgid "Countdown timer duration (seconds)"
@@ -197,7 +197,7 @@ msgstr "Pular automaticamente (sem confirmação)"
 
 msgctxt "#32114"
 msgid "Countdown seconds"
-msgstr "Segundos de contagem"
+msgstr "Segundos do contador"
 
 msgctxt "#32202"
 msgid "Skip Intro ({0}s)"
@@ -206,6 +206,16 @@ msgstr "Pular Abertura ({0}s)"
 msgctxt "#32205"
 msgid "INTRO"
 msgstr "ABERTURA"
+
+# ── Assistido ────────────────────────────────────────────────────────────────
+
+msgctxt "#32032"
+msgid "Mark as watched"
+msgstr "Marcar como assistido"
+
+msgctxt "#32033"
+msgid "Mark as unwatched"
+msgstr "Desmarcar como assistido"
 
 # ── Banco de dados ───────────────────────────────────────────────────────────
 

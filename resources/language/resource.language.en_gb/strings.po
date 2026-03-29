@@ -248,6 +248,16 @@ msgctxt "#32205"
 msgid "INTRO"
 msgstr ""
 
+# ── Watched ──────────────────────────────────────────────────────────────────
+
+msgctxt "#32032"
+msgid "Mark as watched"
+msgstr ""
+
+msgctxt "#32033"
+msgid "Mark as unwatched"
+msgstr ""
+
 # ── Database ─────────────────────────────────────────────────────────────────
 
 msgctxt "#33000"
