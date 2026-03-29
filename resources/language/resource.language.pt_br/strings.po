@@ -101,7 +101,7 @@ msgstr "Nenhum canal encontrado"
 
 msgctxt "#32020"
 msgid "Choose Portuguese audio in settings"
-msgstr "Escolha o áudio em Português nas configurações"
+msgstr "Escolha o áudio em português nas configurações"
 
 msgctxt "#32021"
 msgid "Error: Invalid parameters"
@@ -139,7 +139,7 @@ msgstr "Erro na atualização automática"
 
 msgctxt "#32026"
 msgid "Update error"
-msgstr "Erro de atualização"
+msgstr "Erro na atualização"
 
 # ── Loading dialog ───────────────────────────────────────────────────────────
 
@@ -155,15 +155,15 @@ msgstr "Resolvendo o link"
 
 msgctxt "#32100"
 msgid "Up Next"
-msgstr "A Seguir"
+msgstr "Próximo episódio"
 
 msgctxt "#32101"
 msgid "Enable Up Next"
-msgstr "Ativar A Seguir"
+msgstr "Ativar próximo episódio"
 
 msgctxt "#32102"
 msgid "Show notification when remaining (seconds)"
-msgstr "Mostrar notificação quando restar (segundos)"
+msgstr "Exibir notificação com tempo restante (segundos)"
 
 msgctxt "#32103"
 msgid "Countdown timer duration (seconds)"
@@ -197,7 +197,7 @@ msgstr "Pular automaticamente (sem confirmação)"
 
 msgctxt "#32114"
 msgid "Countdown seconds"
-msgstr "Segundos de contagem"
+msgstr "Segundos do contador"
 
 msgctxt "#32202"
 msgid "Skip Intro ({0}s)"
