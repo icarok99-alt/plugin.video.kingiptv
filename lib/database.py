@@ -214,6 +214,13 @@ class KingDatabase:
                 VALUES (?, ?, ?, ?)
             ''', (imdb_id, int(season), int(episode), now))
 
+    def unmark_watched(self, imdb_id, season, episode):
+        with self._get_connection() as conn:
+            conn.cursor().execute('''
+                DELETE FROM watched_episodes
+                WHERE imdb_id = ? AND season = ? AND episode = ?
+            ''', (imdb_id, int(season), int(episode)))
+
     def is_watched(self, imdb_id, season, episode):
         with self._get_connection() as conn:
             cursor = conn.cursor()

@@ -223,7 +223,7 @@ def notify(msg):
     except:
         pass
 
-def addMenuItem(params={}, destiny='', folder=True):
+def addMenuItem(params={}, destiny='', folder=True, context_menu=None):
     try:
         destiny = destiny.split('/')[1]
     except:
@@ -341,6 +341,8 @@ def addMenuItem(params={}, destiny='', folder=True):
         li.setProperty('fanart_image', fanart)
     else:
         li.setProperty('fanart_image', addonFanart)
+    if context_menu:
+        li.addContextMenuItems(context_menu, replaceItems=True)
     xbmcplugin.addDirectoryItem(handle=handle, url=u, listitem=li, isFolder=folder)
 
 def play_video(params):
