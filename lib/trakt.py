@@ -47,7 +47,7 @@ def _trakt_images(media_type, trakt_item):
 def _get(path, params=None):
     p = params or {}
     if 'extended' not in p:
-        p['extended'] = 'images'
+        p['extended'] = 'full,images'
     try:
         r = requests.get(
             TRAKT_BASE + path,
@@ -67,6 +67,15 @@ def _slug_from(v):
     m = re.search(r'/(tt\d+)/', v)
     return m.group(1) if m else v
 
+def _fmt_rating(d):
+    raw = d.get('rating')
+    if raw is None:
+        return ''
+    try:
+        return '{:.1f}/10'.format(float(raw))
+    except (TypeError, ValueError):
+        return ''
+
 def _to_movie(d):
     title = html.unescape(str(d.get('title', '')).strip())
     year = str(d.get('year', '') or '')
@@ -75,7 +84,8 @@ def _to_movie(d):
     imdb_id = ids.get('imdb', '') or ''
     slug = ids.get('slug', '') or imdb_id
     poster, fanart = _trakt_images('movie', d)
-    return (title, poster, slug, desc, imdb_id, title, year, fanart)
+    rating = _fmt_rating(d)
+    return (title, poster, slug, desc, imdb_id, title, year, fanart, rating)
 
 def _to_show(d):
     title = html.unescape(str(d.get('title', '')).strip())
@@ -85,7 +95,8 @@ def _to_show(d):
     imdb_id = ids.get('imdb', '') or ''
     slug = ids.get('slug', '') or imdb_id
     poster, fanart = _trakt_images('show', d)
-    return (title, poster, slug, desc, imdb_id, title, year, fanart)
+    rating = _fmt_rating(d)
+    return (title, poster, slug, desc, imdb_id, title, year, fanart, rating)
 
 def _valid(t):
     return bool(t[0] and t[2])
@@ -101,7 +112,7 @@ def _sort_search(results, key, query):
 def search_movies(query):
     out = []
     try:
-        raw = _get('/search/movie', {'query': query, 'limit': 30, 'extended': 'images'}) or []
+        raw = _get('/search/movie', {'query': query, 'limit': 30, 'extended': 'full,images'}) or []
         for r in _sort_search(raw, 'movie', query):
             t = _to_movie(r.get('movie', {}))
             if _valid(t):
@@ -113,7 +124,7 @@ def search_movies(query):
 def search_series(query):
     out = []
     try:
-        raw = _get('/search/show', {'query': query, 'limit': 30, 'extended': 'images'}) or []
+        raw = _get('/search/show', {'query': query, 'limit': 30, 'extended': 'full,images'}) or []
         for r in _sort_search(raw, 'show', query):
             t = _to_show(r.get('show', {}))
             if _valid(t):
@@ -185,8 +196,8 @@ def get_episodes(season_ref):
     out = []
     try:
         slug, snum = season_ref.split('::', 1)
-        show = _get(f'/shows/{slug}', {'extended': 'images'}) or {}
-        poster, fanart = _trakt_images('show', show)
+        show = _get(f'/shows/{slug}', {'extended': 'full,images'}) or {}
+        show_poster, show_fanart = _trakt_images('show', show)
         for ep in (_get(f'/shows/{slug}/seasons/{snum}/episodes', {'extended': 'full,images'}) or []):
             num = ep.get('number', 0)
             title = html.unescape(str(ep.get('title') or f'Episode {num}').strip())
@@ -198,8 +209,8 @@ def get_episodes(season_ref):
                 t = screenshot_list[0]
                 thumb = f"https://{t}" if not t.startswith('http') else t
             if not thumb:
-                thumb = poster
-            out.append((str(num), title, thumb, fanart or poster, desc))
+                thumb = show_poster
+            out.append((str(num), title, thumb, show_fanart or show_poster, desc, show_poster))
     except Exception:
         pass
     return out

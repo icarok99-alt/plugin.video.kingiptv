@@ -92,7 +92,7 @@ IPTV_PROBLEM_LOG = translate(os.path.join(profile, 'iptv_problems_log.txt'))
 
 
 def _movie_item(m):
-    name, img, _url, desc, imdb_id, original_name, year, fanart = m
+    name, img, _url, desc, imdb_id, original_name, year, fanart, rating = m
     return {
         'name': '{} ({})'.format(name, year) if year and year != '0' else name,
         'description': desc,
@@ -102,12 +102,13 @@ def _movie_item(m):
         'movie_name': name,
         'original_name': original_name,
         'year': year,
+        'rating': rating,
         'playable': True,
     }
 
 
 def _serie_item(s):
-    name, img, slug, desc, imdb_id, original_name, year, fanart = s
+    name, img, slug, desc, imdb_id, original_name, year, fanart, rating = s
     return {
         'name': '{} ({})'.format(name, year) if year and year != '0' else name,
         'description': desc,
@@ -118,6 +119,7 @@ def _serie_item(s):
         'serie_name': name,
         'original_name': original_name,
         'year': year,
+        'rating': rating,
     }
 
 
@@ -450,6 +452,8 @@ def open_seasons(param):
     original_name = param.get('original_name', '')
     url = param.get('url', '')
     imdb_id = param.get('imdbnumber', '')
+    serie_year = param.get('year', '')
+    serie_rating = param.get('rating', '')
 
     items = trakt.get_seasons(url)
     if not items:
@@ -466,6 +470,8 @@ def open_seasons(param):
             'season': season_num,
             'serie_name': serie_name,
             'original_name': original_name,
+            'year': serie_year,
+            'rating': serie_rating,
         }, destiny='/open_episodes')
     end()
     setview('List')
@@ -478,6 +484,8 @@ def open_episodes(param):
     url = param.get('url', '')
     imdb_id = param.get('imdbnumber', '')
     season = param.get('season', '')
+    serie_year = param.get('year', '')
+    serie_rating = param.get('rating', '')
 
     items = trakt.get_episodes(url)
     if not items:
@@ -486,7 +494,7 @@ def open_episodes(param):
     get_db().save_season_episodes(
         imdb_id=imdb_id, season=int(season),
         serie_name=serie_name, original_name=original_name,
-        episodes_data=items,
+        episodes_data=[ep[:5] for ep in items],
     )
     prefetch_skip_timestamps(
         imdb_id=imdb_id, season=int(season),
@@ -495,7 +503,7 @@ def open_episodes(param):
     watched_set = get_db().get_watched_in_season(imdb_id, int(season))
 
     setcontent('episodes')
-    for ep_num, name, img, fanart, desc in items:
+    for ep_num, name, img, fanart, desc, show_poster in items:
         name_full = '{}x{} - {}'.format(season, str(ep_num).zfill(2), name)
         is_watched = int(ep_num) in watched_set
         ctx_label = '[B]{}[/B]'.format(getString(32033) if is_watched else getString(32032))
@@ -503,11 +511,13 @@ def open_episodes(param):
             imdb_id, season, ep_num)
         addMenuItem({
             'name': name_full, 'description': desc, 'iconimage': img,
-            'fanart': fanart, 'imdbnumber': imdb_id, 'season_num': season,
+            'fanart': fanart, 'show_poster': show_poster,
+            'imdbnumber': imdb_id, 'season_num': season,
             'episode_num': str(ep_num), 'serie_name': serie_name,
             'original_name': original_name, 'episode_title': name,
             'mediatype': 'episode', 'playable': True,
             'playcount': 1 if is_watched else 0,
+            'year': serie_year, 'rating': serie_rating,
         }, destiny='/play_resolve_series', folder=False,
            context_menu=[(ctx_label, mark_url)])
     end()
@@ -523,8 +533,16 @@ def play_resolve_movies(param):
     description = param.get('description', '')
     year = param.get('year', '')
     original_name = param.get('original_name', '')
+    rating = param.get('rating', '')
 
-    loading_manager.show(fanart_path=fanart or None)
+    loading_manager.show(
+        fanart_path=fanart or None,
+        poster=iconimage or None,
+        title=movie_name or None,
+        year=year or None,
+        desc=description or None,
+        rating=rating or None,
+    )
     try:
         result = api_vod.VOD().movie(imdb_number)
         if not result:
@@ -587,6 +605,7 @@ def play_resolve_series(param):
     fanart = param.get('fanart', '')
     imdb_number = param.get('imdbnumber', '')
     description = param.get('description', '')
+    show_poster = param.get('show_poster', '') or iconimage
 
     if not (episode and season and str(episode).isdigit() and str(season).isdigit()):
         notify(getString(32022))
@@ -598,7 +617,14 @@ def play_resolve_series(param):
         notify(getString(32022))
         return
 
-    loading_manager.show(fanart_path=fanart or None)
+    loading_manager.show(
+        fanart_path=fanart or None,
+        poster=show_poster or None,
+        title=serie_name or None,
+        year=param.get('year', '') or None,
+        desc=description or None,
+        rating=param.get('rating', '') or None,
+    )
     try:
         result = api_vod.VOD().tvshows(imdb_number, season_num, ep_num)
         if not result:

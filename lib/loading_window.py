@@ -60,7 +60,7 @@ class LoadingWindow(xbmcgui.WindowXMLDialog):
         try:
             xbmcgui.Window(10000).clearProperty('loading.phase2')
             self.start_progress_animation()
-        except Exception as e:
+        except Exception:
             pass
 
     def start_progress_animation(self):
@@ -81,13 +81,13 @@ class LoadingWindow(xbmcgui.WindowXMLDialog):
 
                 if not self.closing:
                     time.sleep(0.2)
-        except Exception as e:
+        except Exception:
             pass
 
     def set_phase2(self):
         try:
             xbmcgui.Window(10000).setProperty('loading.phase2', 'true')
-        except Exception as e:
+        except Exception:
             pass
 
     def close_dialog(self):
@@ -97,12 +97,18 @@ class LoadingWindow(xbmcgui.WindowXMLDialog):
             if self._progress_thread and self._progress_thread.is_alive():
                 self._progress_thread.join(timeout=1.0)
 
-            xbmcgui.Window(10000).clearProperty('loading.phase2')
-            xbmcgui.Window(10000).clearProperty('loading.progress')
-            xbmcgui.Window(10000).clearProperty('loading.fanart')
+            win = xbmcgui.Window(10000)
+            win.clearProperty('loading.phase2')
+            win.clearProperty('loading.progress')
+            win.clearProperty('loading.fanart')
+            win.clearProperty('loading.poster')
+            win.clearProperty('loading.title')
+            win.clearProperty('loading.year')
+            win.clearProperty('loading.desc')
+            win.clearProperty('loading.rating')
 
             self.close()
-        except Exception as e:
+        except Exception:
             pass
 
 
@@ -126,7 +132,8 @@ class LoadingManager:
                 pass
             xbmc.sleep(100)
 
-    def show(self, fanart_path=None):
+    def show(self, fanart_path=None, poster=None, title=None,
+             year=None, desc=None, rating=None):
         with self._lock:
             try:
                 if self.window:
@@ -139,14 +146,24 @@ class LoadingManager:
                 addon = xbmcaddon.Addon()
                 addon_path = addon.getAddonInfo('path')
 
-                if fanart_path is None:
-                    fanart_path = os.path.join(addon_path, 'resources', 'skins', 'Default', 'media', 'fanart.jpg')
+                win = xbmcgui.Window(10000)
 
-                xbmcgui.Window(10000).setProperty('loading.fanart', fanart_path)
+                if fanart_path is None:
+                    fanart_path = os.path.join(
+                        addon_path, 'resources', 'skins', 'Default', 'media', 'fanart.jpg'
+                    )
+                win.setProperty('loading.fanart', fanart_path)
+                win.setProperty('loading.poster',  poster  or '')
+                win.setProperty('loading.title',   title   or '')
+                win.setProperty('loading.year',    year    or '')
+                win.setProperty('loading.desc',    desc    or '')
+                win.setProperty('loading.rating',  rating  or '')
 
                 self._should_close = False
                 self._suppress_busy = True
-                self._busy_suppress_thread = threading.Thread(target=self._run_busy_suppressor)
+                self._busy_suppress_thread = threading.Thread(
+                    target=self._run_busy_suppressor
+                )
                 self._busy_suppress_thread.daemon = True
                 self._busy_suppress_thread.start()
 
@@ -159,14 +176,14 @@ class LoadingManager:
                 self.window.show()
                 xbmc.sleep(100)
 
-            except Exception as e:
+            except Exception:
                 pass
 
     def set_phase2(self):
         if self.window:
             try:
                 self.window.set_phase2()
-            except Exception as e:
+            except Exception:
                 pass
 
     def close(self):
@@ -186,7 +203,7 @@ class LoadingManager:
                     self._suppress_busy = False
                     self.window.close_dialog()
                     self.window = None
-                except Exception as e:
+                except Exception:
                     pass
 
     def force_close(self):
@@ -197,7 +214,7 @@ class LoadingManager:
                 try:
                     self.window.close_dialog()
                     self.window = None
-                except Exception as e:
+                except Exception:
                     pass
 
 
