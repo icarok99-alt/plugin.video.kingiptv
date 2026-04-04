@@ -146,7 +146,7 @@ def _render_series(items, route, page):
 
 
 def _build_series_playlist(imdb_number, season_num, current_ep,
-                           serie_name, original_name, all_episodes):
+                           serie_name, original_name, all_episodes, show_poster=''):
     if not all_episodes or not isinstance(all_episodes, list):
         return
     playlist = xbmc.PlayList(xbmc.PLAYLIST_VIDEO)
@@ -165,6 +165,7 @@ def _build_series_playlist(imdb_number, season_num, current_ep,
             'season_num': str(season_num), 'episode_num': str(ep_num),
             'episode_title': name, 'iconimage': img, 'fanart': fanart,
             'imdbnumber': imdb_number, 'description': desc,
+            'show_poster': show_poster,
         }
         plugin_url = 'plugin://plugin.video.kingiptv/play_resolve_series/{}'.format(
             urlencode(params))
@@ -679,7 +680,7 @@ def play_resolve_series(param):
             all_eps = get_db().get_season_episodes(imdb_number, season_num)
             if all_eps:
                 _build_series_playlist(imdb_number, season_num, ep_num,
-                                       serie_name, original_name, all_eps)
+                                       serie_name, original_name, all_eps, show_poster)
 
         player = get_player()
         threading.Thread(target=player.start_monitoring,
