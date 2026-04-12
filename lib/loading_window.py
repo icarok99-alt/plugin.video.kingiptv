@@ -40,7 +40,7 @@ class _PlaybackMonitor(xbmc.Player):
             try:
                 if self.isPlaying() and self.getTime() > 0:
                     return True
-            except:
+            except Exception:
                 pass
             if monitor.waitForAbort(interval):
                 return False
@@ -64,7 +64,7 @@ class LoadingWindow(xbmcgui.WindowXMLDialog):
             self._controls_ready = True
             xbmcgui.Window(10000).clearProperty('loading.phase2')
             self.start_progress_animation()
-        except Exception as e:
+        except Exception:
             pass
 
     def start_progress_animation(self):
@@ -84,7 +84,7 @@ class LoadingWindow(xbmcgui.WindowXMLDialog):
                     if self._controls_ready:
                         try:
                             self.getControl(self.PROGRESS_CONTROL).setPercent(i)
-                        except:
+                        except Exception:
                             pass
 
                     xbmcgui.Window(10000).setProperty('loading.progress', str(i))
@@ -92,13 +92,13 @@ class LoadingWindow(xbmcgui.WindowXMLDialog):
 
                 if not self.closing:
                     time.sleep(0.2)
-        except Exception as e:
+        except Exception:
             pass
 
     def set_phase2(self):
         try:
             xbmcgui.Window(10000).setProperty('loading.phase2', 'true')
-        except Exception as e:
+        except Exception:
             pass
 
     def close_dialog(self):
@@ -113,7 +113,7 @@ class LoadingWindow(xbmcgui.WindowXMLDialog):
             xbmcgui.Window(10000).clearProperty('loading.fanart')
 
             self.close()
-        except Exception as e:
+        except Exception:
             pass
 
 
@@ -133,7 +133,7 @@ class LoadingManager:
             try:
                 xbmc.executebuiltin('Dialog.Close(busydialog,true)')
                 xbmc.executebuiltin('Dialog.Close(busydialognocancel,true)')
-            except:
+            except Exception:
                 pass
             xbmc.sleep(100)
 
@@ -143,7 +143,7 @@ class LoadingManager:
                 if self.window:
                     try:
                         self.window.close_dialog()
-                    except:
+                    except Exception:
                         pass
                     self.window = None
 
@@ -170,14 +170,14 @@ class LoadingManager:
                 self.window.show()
                 xbmc.sleep(100)
 
-            except Exception as e:
+            except Exception:
                 pass
 
     def set_phase2(self):
         if self.window:
             try:
                 self.window.set_phase2()
-            except Exception as e:
+            except Exception:
                 pass
 
     def close(self):
@@ -197,7 +197,7 @@ class LoadingManager:
                     self._suppress_busy = False
                     self.window.close_dialog()
                     self.window = None
-                except Exception as e:
+                except Exception:
                     pass
 
     def force_close(self):
@@ -208,7 +208,7 @@ class LoadingManager:
                 try:
                     self.window.close_dialog()
                     self.window = None
-                except Exception as e:
+                except Exception:
                     pass
 
 
