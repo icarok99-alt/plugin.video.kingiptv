@@ -159,4 +159,3 @@ def playlist_pluto():
 
     return channels_kodi
 
-
