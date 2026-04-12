@@ -40,7 +40,7 @@ class _PlaybackMonitor(xbmc.Player):
             try:
                 if self.isPlaying() and self.getTime() > 0:
                     return True
-            except:
+            except Exception:
                 pass
             if monitor.waitForAbort(interval):
                 return False
@@ -51,13 +51,17 @@ class _PlaybackMonitor(xbmc.Player):
 
 class LoadingWindow(xbmcgui.WindowXMLDialog):
 
+    PROGRESS_CONTROL = 100
+
     def __init__(self, *args, **kwargs):
         self.progress = 0
         self.closing = False
         self._progress_thread = None
+        self._controls_ready = False
 
     def onInit(self):
         try:
+            self._controls_ready = True
             xbmcgui.Window(10000).clearProperty('loading.phase2')
             self.start_progress_animation()
         except Exception:
@@ -76,6 +80,13 @@ class LoadingWindow(xbmcgui.WindowXMLDialog):
                 for i in range(0, 101, 2):
                     if self.closing:
                         break
+
+                    if self._controls_ready:
+                        try:
+                            self.getControl(self.PROGRESS_CONTROL).setPercent(i)
+                        except Exception:
+                            pass
+
                     xbmcgui.Window(10000).setProperty('loading.progress', str(i))
                     time.sleep(0.05)
 
@@ -97,15 +108,9 @@ class LoadingWindow(xbmcgui.WindowXMLDialog):
             if self._progress_thread and self._progress_thread.is_alive():
                 self._progress_thread.join(timeout=1.0)
 
-            win = xbmcgui.Window(10000)
-            win.clearProperty('loading.phase2')
-            win.clearProperty('loading.progress')
-            win.clearProperty('loading.fanart')
-            win.clearProperty('loading.poster')
-            win.clearProperty('loading.title')
-            win.clearProperty('loading.year')
-            win.clearProperty('loading.desc')
-            win.clearProperty('loading.rating')
+            xbmcgui.Window(10000).clearProperty('loading.phase2')
+            xbmcgui.Window(10000).clearProperty('loading.progress')
+            xbmcgui.Window(10000).clearProperty('loading.fanart')
 
             self.close()
         except Exception:
@@ -128,42 +133,31 @@ class LoadingManager:
             try:
                 xbmc.executebuiltin('Dialog.Close(busydialog,true)')
                 xbmc.executebuiltin('Dialog.Close(busydialognocancel,true)')
-            except:
+            except Exception:
                 pass
             xbmc.sleep(100)
 
-    def show(self, fanart_path=None, poster=None, title=None,
-             year=None, desc=None, rating=None):
+    def show(self, fanart_path=None):
         with self._lock:
             try:
                 if self.window:
                     try:
                         self.window.close_dialog()
-                    except:
+                    except Exception:
                         pass
                     self.window = None
 
                 addon = xbmcaddon.Addon()
                 addon_path = addon.getAddonInfo('path')
 
-                win = xbmcgui.Window(10000)
-
                 if fanart_path is None:
-                    fanart_path = os.path.join(
-                        addon_path, 'resources', 'skins', 'Default', 'media', 'fanart.jpg'
-                    )
-                win.setProperty('loading.fanart', fanart_path)
-                win.setProperty('loading.poster',  poster  or '')
-                win.setProperty('loading.title',   title   or '')
-                win.setProperty('loading.year',    year    or '')
-                win.setProperty('loading.desc',    desc    or '')
-                win.setProperty('loading.rating',  rating  or '')
+                    fanart_path = os.path.join(addon_path, 'resources', 'skins', 'Default', 'media', 'fanart.jpg')
+
+                xbmcgui.Window(10000).setProperty('loading.fanart', fanart_path)
 
                 self._should_close = False
                 self._suppress_busy = True
-                self._busy_suppress_thread = threading.Thread(
-                    target=self._run_busy_suppressor
-                )
+                self._busy_suppress_thread = threading.Thread(target=self._run_busy_suppressor)
                 self._busy_suppress_thread.daemon = True
                 self._busy_suppress_thread.start()
 

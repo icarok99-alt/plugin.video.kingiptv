@@ -1,11 +1,8 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<window type="dialog">
-    <defaultcontrol>2</defaultcontrol>
-    <coordinates>
-        <s>1</s>
-        <posx>0</posx>
-        <posy>0</posy>
-    </coordinates>
+<window>
+    <defaultcontrol>-</defaultcontrol>
+    <allowoverlay>no</allowoverlay>
+
     <controls>
 
         <control type="image">
@@ -13,9 +10,9 @@
             <posy>0</posy>
             <width>1920</width>
             <height>1080</height>
-            <texture>$INFO[Window(10000).Property(loading.fanart)]</texture>
+            <texture>$INFO[Window(Home).Property(loading.fanart)]</texture>
             <aspectratio>scale</aspectratio>
-            <fadetime>400</fadetime>
+            <fadetime>300</fadetime>
         </control>
 
         <control type="image">
@@ -23,272 +20,66 @@
             <posy>0</posy>
             <width>1920</width>
             <height>1080</height>
-            <texture>white.png</texture>
-            <colordiffuse>CC000000</colordiffuse>
-        </control>
-
-        <control type="image">
-            <posx>0</posx>
-            <posy>830</posy>
-            <width>1920</width>
-            <height>250</height>
-            <texture>white.png</texture>
-            <colordiffuse>55000000</colordiffuse>
-        </control>
-
-        <control type="image">
-            <posx>76</posx>
-            <posy>176</posy>
-            <width>278</width>
-            <height>408</height>
-            <texture>white.png</texture>
-            <colordiffuse>33FFFFFF</colordiffuse>
-            <visible>!String.IsEmpty(Window(10000).Property(loading.poster))</visible>
-        </control>
-
-        <control type="image">
-            <posx>80</posx>
-            <posy>180</posy>
-            <width>270</width>
-            <height>400</height>
-            <texture>$INFO[Window(10000).Property(loading.poster)]</texture>
-            <aspectratio>keep</aspectratio>
-            <fadetime>500</fadetime>
-            <visible>!String.IsEmpty(Window(10000).Property(loading.poster))</visible>
-            <animation effect="fade" start="0" end="100" time="500">Visible</animation>
-            <animation effect="fade" start="100" end="0" time="300">Hidden</animation>
+            <texture colordiffuse="AA000000">white.png</texture>
         </control>
 
         <control type="group">
-            <posx>400</posx>
-            <posy>180</posy>
-            <visible>!String.IsEmpty(Window(10000).Property(loading.title))</visible>
-            <animation effect="fade" start="0" end="100" time="600">Visible</animation>
-            <animation effect="fade" start="100" end="0" time="300">Hidden</animation>
+            <posx>610</posx>
+            <posy>152</posy>
+            <width>700</width>
+            <height>466</height>
 
-            <control type="label">
+            <control type="image">
+                <posx>70</posx>
+                <posy>20</posy>
+                <width>560</width>
+                <height>340</height>
+                <texture>icon.png</texture>
+                <aspectratio>keep</aspectratio>
+            </control>
+
+            <control type="progress" id="100">
                 <posx>0</posx>
-                <posy>0</posy>
-                <width>1440</width>
-                <height>65</height>
-                <font>font13_title</font>
-                <textcolor>FFFFFFFF</textcolor>
-                <label>$INFO[Window(10000).Property(loading.title)]</label>
-                <align>left</align>
-                <aligny>center</aligny>
-                <scroll>false</scroll>
+                <posy>360</posy>
+                <width>700</width>
+                <height>56</height>
+
+                <texturebg>barra_bg.png</texturebg>
+                <lefttexture>barra_fill_left.png</lefttexture>
+                <midtexture>barra_fill_mid.png</midtexture>
+                <righttexture>barra_fill_right.png</righttexture>
+
+                <visible>true</visible>
             </control>
 
             <control type="label">
                 <posx>0</posx>
-                <posy>72</posy>
-                <width>65</width>
-                <height>36</height>
-                <font>font13</font>
-                <textcolor>FFAAAAAA</textcolor>
-                <label>$INFO[Window(10000).Property(loading.year)]</label>
-                <align>left</align>
-                <aligny>center</aligny>
-                <visible>!String.IsEmpty(Window(10000).Property(loading.year))</visible>
-            </control>
-
-            <control type="label">
-                <posx>72</posx>
-                <posy>72</posy>
-                <width>24</width>
-                <height>36</height>
-                <font>font13</font>
-                <textcolor>FF666666</textcolor>
-                <label>·</label>
+                <posy>436</posy>
+                <width>700</width>
+                <height>30</height>
                 <align>center</align>
                 <aligny>center</aligny>
-                <visible>!String.IsEmpty(Window(10000).Property(loading.rating))</visible>
+                <font>font15</font>
+                <textcolor>FFFFFFFF</textcolor>
+                <shadowcolor>FF000000</shadowcolor>
+                <label>$ADDON[plugin.video.kingiptv 32030]</label>
+                <visible>String.IsEmpty(Window(Home).Property(loading.phase2))</visible>
             </control>
 
             <control type="label">
-                <posx>90</posx>
-                <posy>72</posy>
-                <width>220</width>
-                <height>36</height>
-                <font>font13</font>
-                <textcolor>FFFFCC44</textcolor>
-                <label>&#9733; $INFO[Window(10000).Property(loading.rating)]</label>
-                <align>left</align>
+                <posx>0</posx>
+                <posy>436</posy>
+                <width>700</width>
+                <height>30</height>
+                <align>center</align>
                 <aligny>center</aligny>
-                <visible>!String.IsEmpty(Window(10000).Property(loading.rating))</visible>
+                <font>font15</font>
+                <textcolor>FFFFFFFF</textcolor>
+                <shadowcolor>FF000000</shadowcolor>
+                <label>$ADDON[plugin.video.kingiptv 32031]</label>
+                <visible>!String.IsEmpty(Window(Home).Property(loading.phase2))</visible>
             </control>
 
-            <control type="image">
-                <posx>0</posx>
-                <posy>118</posy>
-                <width>650</width>
-                <height>1</height>
-                <texture>white.png</texture>
-                <colordiffuse>33FFFFFF</colordiffuse>
-            </control>
-
-            <control type="label">
-                <posx>0</posx>
-                <posy>132</posy>
-                <width>1440</width>
-                <height>280</height>
-                <font>font13</font>
-                <textcolor>FFBBBBBB</textcolor>
-                <label>$INFO[Window(10000).Property(loading.desc)]</label>
-                <align>left</align>
-                <aligny>top</aligny>
-                <wrapmultiline>true</wrapmultiline>
-                <visible>!String.IsEmpty(Window(10000).Property(loading.desc))</visible>
-            </control>
-        </control>
-
-        <control type="group">
-            <posx>650</posx>
-            <posy>865</posy>
-
-            <control type="image">
-                <posx>0</posx>   <posy>0</posy> <width>50</width> <height>50</height>
-                <texture>white.png</texture> <colordiffuse>22FFFFFF</colordiffuse>
-                <visible>!Integer.IsGreaterOrEqual(Window(10000).Property(loading.progress),6)</visible>
-                <animation effect="fade" start="100" end="0" time="500">Hidden</animation>
-            </control>
-            <control type="image">
-                <posx>0</posx>   <posy>0</posy> <width>50</width> <height>50</height>
-                <texture>white.png</texture> <colordiffuse>FFFFFFFF</colordiffuse>
-                <visible>Integer.IsGreaterOrEqual(Window(10000).Property(loading.progress),6)</visible>
-                <animation effect="fade" start="0" end="100" time="500">Visible</animation>
-            </control>
-
-            <control type="image">
-                <posx>70</posx>  <posy>0</posy> <width>50</width> <height>50</height>
-                <texture>white.png</texture> <colordiffuse>22FFFFFF</colordiffuse>
-                <visible>!Integer.IsGreaterOrEqual(Window(10000).Property(loading.progress),17)</visible>
-                <animation effect="fade" start="100" end="0" time="500">Hidden</animation>
-            </control>
-            <control type="image">
-                <posx>70</posx>  <posy>0</posy> <width>50</width> <height>50</height>
-                <texture>white.png</texture> <colordiffuse>FFFFFFFF</colordiffuse>
-                <visible>Integer.IsGreaterOrEqual(Window(10000).Property(loading.progress),17)</visible>
-                <animation effect="fade" start="0" end="100" time="500">Visible</animation>
-            </control>
-
-            <control type="image">
-                <posx>140</posx> <posy>0</posy> <width>50</width> <height>50</height>
-                <texture>white.png</texture> <colordiffuse>22FFFFFF</colordiffuse>
-                <visible>!Integer.IsGreaterOrEqual(Window(10000).Property(loading.progress),28)</visible>
-                <animation effect="fade" start="100" end="0" time="500">Hidden</animation>
-            </control>
-            <control type="image">
-                <posx>140</posx> <posy>0</posy> <width>50</width> <height>50</height>
-                <texture>white.png</texture> <colordiffuse>FFFFFFFF</colordiffuse>
-                <visible>Integer.IsGreaterOrEqual(Window(10000).Property(loading.progress),28)</visible>
-                <animation effect="fade" start="0" end="100" time="500">Visible</animation>
-            </control>
-
-            <control type="image">
-                <posx>210</posx> <posy>0</posy> <width>50</width> <height>50</height>
-                <texture>white.png</texture> <colordiffuse>22FFFFFF</colordiffuse>
-                <visible>!Integer.IsGreaterOrEqual(Window(10000).Property(loading.progress),39)</visible>
-                <animation effect="fade" start="100" end="0" time="500">Hidden</animation>
-            </control>
-            <control type="image">
-                <posx>210</posx> <posy>0</posy> <width>50</width> <height>50</height>
-                <texture>white.png</texture> <colordiffuse>FFFFFFFF</colordiffuse>
-                <visible>Integer.IsGreaterOrEqual(Window(10000).Property(loading.progress),39)</visible>
-                <animation effect="fade" start="0" end="100" time="500">Visible</animation>
-            </control>
-
-            <control type="image">
-                <posx>280</posx> <posy>0</posy> <width>50</width> <height>50</height>
-                <texture>white.png</texture> <colordiffuse>22FFFFFF</colordiffuse>
-                <visible>!Integer.IsGreaterOrEqual(Window(10000).Property(loading.progress),50)</visible>
-                <animation effect="fade" start="100" end="0" time="500">Hidden</animation>
-            </control>
-            <control type="image">
-                <posx>280</posx> <posy>0</posy> <width>50</width> <height>50</height>
-                <texture>white.png</texture> <colordiffuse>FFFFFFFF</colordiffuse>
-                <visible>Integer.IsGreaterOrEqual(Window(10000).Property(loading.progress),50)</visible>
-                <animation effect="fade" start="0" end="100" time="500">Visible</animation>
-            </control>
-
-            <control type="image">
-                <posx>350</posx> <posy>0</posy> <width>50</width> <height>50</height>
-                <texture>white.png</texture> <colordiffuse>22FFFFFF</colordiffuse>
-                <visible>!Integer.IsGreaterOrEqual(Window(10000).Property(loading.progress),61)</visible>
-                <animation effect="fade" start="100" end="0" time="500">Hidden</animation>
-            </control>
-            <control type="image">
-                <posx>350</posx> <posy>0</posy> <width>50</width> <height>50</height>
-                <texture>white.png</texture> <colordiffuse>FFFFFFFF</colordiffuse>
-                <visible>Integer.IsGreaterOrEqual(Window(10000).Property(loading.progress),61)</visible>
-                <animation effect="fade" start="0" end="100" time="500">Visible</animation>
-            </control>
-
-            <control type="image">
-                <posx>420</posx> <posy>0</posy> <width>50</width> <height>50</height>
-                <texture>white.png</texture> <colordiffuse>22FFFFFF</colordiffuse>
-                <visible>!Integer.IsGreaterOrEqual(Window(10000).Property(loading.progress),72)</visible>
-                <animation effect="fade" start="100" end="0" time="500">Hidden</animation>
-            </control>
-            <control type="image">
-                <posx>420</posx> <posy>0</posy> <width>50</width> <height>50</height>
-                <texture>white.png</texture> <colordiffuse>FFFFFFFF</colordiffuse>
-                <visible>Integer.IsGreaterOrEqual(Window(10000).Property(loading.progress),72)</visible>
-                <animation effect="fade" start="0" end="100" time="500">Visible</animation>
-            </control>
-
-            <control type="image">
-                <posx>490</posx> <posy>0</posy> <width>50</width> <height>50</height>
-                <texture>white.png</texture> <colordiffuse>22FFFFFF</colordiffuse>
-                <visible>!Integer.IsGreaterOrEqual(Window(10000).Property(loading.progress),83)</visible>
-                <animation effect="fade" start="100" end="0" time="500">Hidden</animation>
-            </control>
-            <control type="image">
-                <posx>490</posx> <posy>0</posy> <width>50</width> <height>50</height>
-                <texture>white.png</texture> <colordiffuse>FFFFFFFF</colordiffuse>
-                <visible>Integer.IsGreaterOrEqual(Window(10000).Property(loading.progress),83)</visible>
-                <animation effect="fade" start="0" end="100" time="500">Visible</animation>
-            </control>
-
-            <control type="image">
-                <posx>560</posx> <posy>0</posy> <width>50</width> <height>50</height>
-                <texture>white.png</texture> <colordiffuse>22FFFFFF</colordiffuse>
-                <visible>!Integer.IsGreaterOrEqual(Window(10000).Property(loading.progress),94)</visible>
-                <animation effect="fade" start="100" end="0" time="500">Hidden</animation>
-            </control>
-            <control type="image">
-                <posx>560</posx> <posy>0</posy> <width>50</width> <height>50</height>
-                <texture>white.png</texture> <colordiffuse>FFFFFFFF</colordiffuse>
-                <visible>Integer.IsGreaterOrEqual(Window(10000).Property(loading.progress),94)</visible>
-                <animation effect="fade" start="0" end="100" time="500">Visible</animation>
-            </control>
-
-        </control>
-
-        <control type="label">
-            <posx>0</posx>
-            <posy>950</posy>
-            <width>1920</width>
-            <height>35</height>
-            <align>center</align>
-            <aligny>center</aligny>
-            <font>font13_title</font>
-            <textcolor>FFFFFFFF</textcolor>
-            <label>$ADDON[plugin.video.kingiptv 32030]</label>
-            <visible>String.IsEmpty(Window(10000).Property(loading.phase2))</visible>
-        </control>
-
-        <control type="label">
-            <posx>0</posx>
-            <posy>950</posy>
-            <width>1920</width>
-            <height>35</height>
-            <align>center</align>
-            <aligny>center</aligny>
-            <font>font13_title</font>
-            <textcolor>FFFFFFFF</textcolor>
-            <label>$ADDON[plugin.video.kingiptv 32031]</label>
-            <visible>!String.IsEmpty(Window(10000).Property(loading.phase2))</visible>
         </control>
 
     </controls>
