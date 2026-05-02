@@ -557,6 +557,7 @@ def open_imdb_episodes(param):
         )
 
         watched_set = get_db().get_watched_in_season(imdb_id, int(season))
+        resume_map = get_db().get_season_resume_times(imdb_id, int(season))
 
         setcontent('episodes')
         for episode_number, name, img, fanart, description in itens:
@@ -575,8 +576,8 @@ def open_imdb_episodes(param):
                 'episode_title': name,
                 'mediatype': 'episode',
                 'playable': True,
-                'playcount': 1 if int(episode_number) in watched_set else 0
-            }, destiny='/play_resolve_series', folder=False)
+                'playcount': 1 if int(episode_number) in watched_set else 0,
+                'resume_time': resume_map.get(int(episode_number)),            }, destiny='/play_resolve_series', folder=False)
 
         end()
         setview('List')
@@ -754,9 +755,14 @@ def play_resolve_series(param):
                     )
             
             player = get_player()
+
+            resume_data = get_db().get_resume_time(imdb_number, season_num, current_episode_num)
+            resume_time = resume_data[0] if resume_data else None
+
             threading.Thread(
                 target=player.start_monitoring,
                 args=(imdb_number, season_num, current_episode_num),
+                kwargs={'resume_time': resume_time},
                 daemon=True
             ).start()
         else:
