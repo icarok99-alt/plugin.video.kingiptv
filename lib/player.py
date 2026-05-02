@@ -24,7 +24,7 @@ class KingPlayer(xbmc.Player):
         self._total_time = 0.0
         self._watched_marked = False
 
-    def start_monitoring(self, imdb_id, season, episode):
+    def start_monitoring(self, imdb_id, season, episode, resume_time=None):
         with self._state_lock:
             self._monitoring = False
 
@@ -43,6 +43,7 @@ class KingPlayer(xbmc.Player):
         self._monitor_thread = threading.Thread(
             target=self._monitoring_loop,
             args=(imdb_id, season, episode),
+            kwargs={'resume_time': resume_time},
             daemon=True,
         )
         self._monitor_thread.start()
@@ -55,7 +56,7 @@ class KingPlayer(xbmc.Player):
         if imdb_id and season is not None and episode is not None:
             self._skip_service.save_skip_point(imdb_id, season, episode, point)
 
-    def _monitoring_loop(self, imdb_id, season, episode):
+    def _monitoring_loop(self, imdb_id, season, episode, resume_time=None):
         monitor = xbmc.Monitor()
 
         waited = 0
@@ -90,6 +91,12 @@ class KingPlayer(xbmc.Player):
 
         with self._state_lock:
             self._total_time = total_time
+
+        if resume_time and 0 < resume_time < total_time * 0.95:
+            try:
+                self.seekTime(resume_time)
+            except Exception:
+                pass
 
         skip_data = self._skip_service.load(imdb_id, season, episode)
         next_info = self._upnext_service.load(imdb_id, season, episode)
@@ -156,6 +163,11 @@ class KingPlayer(xbmc.Player):
                     args=(imdb_id, season, episode),
                     daemon=True,
                 ).start()
+                threading.Thread(
+                    target=db.clear_resume_time,
+                    args=(imdb_id, season, episode),
+                    daemon=True,
+                ).start()
 
             if not upnext_shown and next_info:
                 if (total_time - ct) <= self._upnext_service.trigger_seconds:
@@ -169,7 +181,15 @@ class KingPlayer(xbmc.Player):
             monitor.waitForAbort(0.5)
 
         with self._state_lock:
+            watched = self._watched_marked
+            last_time = self._last_time
             self._monitoring = False
+
+        if not watched and total_time > 60:
+            if last_time > total_time * 0.02 and last_time < total_time * 0.85:
+                db.save_resume_time(imdb_id, season, episode, last_time, total_time)
+            elif last_time >= total_time * 0.85:
+                db.clear_resume_time(imdb_id, season, episode)
 
     def _on_stop(self):
         with self._state_lock:
@@ -198,6 +218,11 @@ class KingPlayer(xbmc.Player):
         ):
             threading.Thread(
                 target=db.mark_watched,
+                args=(imdb_id, season, episode),
+                daemon=True,
+            ).start()
+            threading.Thread(
+                target=db.clear_resume_time,
                 args=(imdb_id, season, episode),
                 daemon=True,
             ).start()

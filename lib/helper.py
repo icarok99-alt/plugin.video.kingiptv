@@ -323,6 +323,11 @@ def addMenuItem(params={}, destiny='', folder=True):
             info.setPlaycount(int(playcount))
         else:
             li.setInfo('video', {'playcount': int(playcount)})
+    resume_time = params.get('resume_time', None)
+    if resume_time is not None:
+        position, total = resume_time
+        li.setProperty('ResumeTime', str(int(position)))
+        li.setProperty('TotalTime', str(int(total)))
     season_num = params.get('season_num', season)
     episode_num = params.get('episode_num', episode)
     if season_num:

@@ -90,6 +90,18 @@ class KingDatabase:
                 'CREATE INDEX IF NOT EXISTS idx_skip_imdb ON skip_timestamps(imdb_id)'
             )
 
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS resume_time (
+                    imdb_id TEXT NOT NULL,
+                    season INTEGER NOT NULL,
+                    episode INTEGER NOT NULL,
+                    position REAL NOT NULL,
+                    total_time REAL NOT NULL DEFAULT 0.0,
+                    updated_at TEXT,
+                    PRIMARY KEY (imdb_id, season, episode)
+                )
+            ''')
+
             cursor.execute("PRAGMA table_info(episodes_metadata)")
             columns = [column[1] for column in cursor.fetchall()]
             if 'is_last_episode' not in columns:
@@ -350,3 +362,38 @@ class KingDatabase:
                 ''', batch_data)
 
         return len(batch_data)
+
+    def save_resume_time(self, imdb_id, season, episode, position, total_time=0.0):
+        now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        with self._get_connection() as conn:
+            conn.cursor().execute('''
+                INSERT OR REPLACE INTO resume_time
+                    (imdb_id, season, episode, position, total_time, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?)
+            ''', (imdb_id, int(season), int(episode), float(position), float(total_time), now))
+
+    def get_resume_time(self, imdb_id, season, episode):
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                SELECT position, total_time FROM resume_time
+                WHERE imdb_id = ? AND season = ? AND episode = ?
+            ''', (imdb_id, int(season), int(episode)))
+            row = cursor.fetchone()
+            return (float(row[0]), float(row[1])) if row else None
+
+    def clear_resume_time(self, imdb_id, season, episode):
+        with self._get_connection() as conn:
+            conn.cursor().execute('''
+                DELETE FROM resume_time
+                WHERE imdb_id = ? AND season = ? AND episode = ?
+            ''', (imdb_id, int(season), int(episode)))
+
+    def get_season_resume_times(self, imdb_id, season):
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                SELECT episode, position, total_time FROM resume_time
+                WHERE imdb_id = ? AND season = ?
+            ''', (imdb_id, int(season)))
+            return {row[0]: (float(row[1]), float(row[2])) for row in cursor.fetchall()}
