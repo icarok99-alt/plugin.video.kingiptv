@@ -101,12 +101,6 @@ class KingPlayer(xbmc.Player):
         skip_data = self._skip_service.load(imdb_id, season, episode)
         next_info = self._upnext_service.load(imdb_id, season, episode)
 
-        threading.Thread(
-            target=self._skip_service.prefetch_season,
-            args=(imdb_id, season),
-            daemon=True,
-        ).start()
-
         watched_at = total_time * 0.9
         upnext_start_at = min(
             total_time * 0.9,
