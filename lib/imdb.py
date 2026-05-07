@@ -44,7 +44,7 @@ class IMDBScraper:
 
     def _get(self, url: str) -> str:
         resp = self.session.get(url, headers=self.headers)
-        if resp.status_code in (403, 429):
+        if resp.status_code in (202, 403, 429):  # fix: 202 indica bloqueio pelo WAF
             self._init_waf()
             resp = self.session.get(url, headers=self.headers)
         return resp.text
