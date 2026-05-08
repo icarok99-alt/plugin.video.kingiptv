@@ -8,15 +8,6 @@
     </coordinates>
     
     <controls>
-        <!-- Background escuro semi-transparente usando black.png -->
-        <control type="image">
-            <posx>0</posx>
-            <posy>0</posy>
-            <width>1920</width>
-            <height>1080</height>
-            <texture colordiffuse="DD000000">black.png</texture>
-        </control>
-        
         <!-- Container principal -->
         <control type="group">
             <posx>1250</posx>
