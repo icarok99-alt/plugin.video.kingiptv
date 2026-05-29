@@ -62,6 +62,7 @@ class LoadingWindow(xbmcgui.WindowXMLDialog):
     def onInit(self):
         try:
             self._controls_ready = True
+            xbmcgui.Window(10000).setProperty('loading.phase', '1')
             xbmcgui.Window(10000).clearProperty('loading.phase2')
             self.start_progress_animation()
         except Exception:
@@ -95,12 +96,6 @@ class LoadingWindow(xbmcgui.WindowXMLDialog):
         except Exception:
             pass
 
-    def set_phase2(self):
-        try:
-            xbmcgui.Window(10000).setProperty('loading.phase2', 'true')
-        except Exception:
-            pass
-
     def close_dialog(self):
         try:
             self.closing = True
@@ -108,6 +103,7 @@ class LoadingWindow(xbmcgui.WindowXMLDialog):
             if self._progress_thread and self._progress_thread.is_alive():
                 self._progress_thread.join(timeout=1.0)
 
+            xbmcgui.Window(10000).clearProperty('loading.phase')
             xbmcgui.Window(10000).clearProperty('loading.phase2')
             xbmcgui.Window(10000).clearProperty('loading.progress')
             xbmcgui.Window(10000).clearProperty('loading.fanart')
@@ -115,6 +111,42 @@ class LoadingWindow(xbmcgui.WindowXMLDialog):
             self.close()
         except Exception:
             pass
+
+
+class SourceSelectWindow(xbmcgui.WindowXMLDialog):
+
+    LIST_CONTROL = 200
+
+    def __init__(self, *args, **kwargs):
+        self.labels = kwargs.pop('labels', [])
+        self.selected_index = -1
+
+    def onInit(self):
+        try:
+            ctrl = self.getControl(self.LIST_CONTROL)
+            ctrl.reset()
+            for label in self.labels:
+                ctrl.addItem(xbmcgui.ListItem(label=label))
+            self.setFocusId(self.LIST_CONTROL)
+        except Exception:
+            pass
+
+    def onClick(self, control_id):
+        if control_id == self.LIST_CONTROL:
+            try:
+                self.selected_index = self.getControl(self.LIST_CONTROL).getSelectedPosition()
+            except Exception:
+                self.selected_index = 0
+            self.close()
+
+    def onAction(self, action):
+        if action.getId() in (
+            xbmcgui.ACTION_PREVIOUS_MENU,
+            xbmcgui.ACTION_NAV_BACK,
+            xbmcgui.ACTION_STOP,
+        ):
+            self.selected_index = -1
+            self.close()
 
 
 class LoadingManager:
@@ -137,6 +169,13 @@ class LoadingManager:
                 pass
             xbmc.sleep(100)
 
+    def _start_busy_suppressor(self):
+        self._suppress_busy = True
+        if self._busy_suppress_thread is None or not self._busy_suppress_thread.is_alive():
+            self._busy_suppress_thread = threading.Thread(target=self._run_busy_suppressor)
+            self._busy_suppress_thread.daemon = True
+            self._busy_suppress_thread.start()
+
     def show(self, fanart_path=None):
         with self._lock:
             try:
@@ -156,10 +195,7 @@ class LoadingManager:
                 xbmcgui.Window(10000).setProperty('loading.fanart', fanart_path)
 
                 self._should_close = False
-                self._suppress_busy = True
-                self._busy_suppress_thread = threading.Thread(target=self._run_busy_suppressor)
-                self._busy_suppress_thread.daemon = True
-                self._busy_suppress_thread.start()
+                self._start_busy_suppressor()
 
                 self.window = LoadingWindow(
                     'DialogLoadingKing.xml',
@@ -173,12 +209,51 @@ class LoadingManager:
             except Exception:
                 pass
 
+    def show_source_select(self, players, fanart_path=None):
+        """
+        Fase 2: DialogSourceSelect abre em cima do loading (que continua aberto).
+        Bloqueia até o usuário escolher.
+        Retorna o índice selecionado ou -1 se cancelado.
+        """
+        try:
+            addon = xbmcaddon.Addon()
+            addon_path = addon.getAddonInfo('path')
+
+            if fanart_path is None:
+                fanart_path = os.path.join(addon_path, 'resources', 'skins', 'Default', 'media', 'fanart.jpg')
+
+            xbmcgui.Window(10000).setProperty('mdl.loading.fanart', fanart_path)
+            xbmcgui.Window(10000).setProperty('loading.phase', '2')
+
+            labels = [label for label, _ in players]
+
+            dialog = SourceSelectWindow(
+                'DialogSourceSelect.xml',
+                addon_path,
+                'Default',
+                '1080i',
+                labels=labels
+            )
+            dialog.doModal()
+
+            xbmcgui.Window(10000).clearProperty('mdl.loading.fanart')
+
+            return dialog.selected_index
+
+        except Exception:
+            return -1
+
+    def set_phase3(self):
+        """Fase 3: resolvendo o link."""
+        try:
+            xbmcgui.Window(10000).setProperty('loading.phase', '3')
+            xbmcgui.Window(10000).setProperty('loading.phase2', 'true')
+        except Exception:
+            pass
+
     def set_phase2(self):
-        if self.window:
-            try:
-                self.window.set_phase2()
-            except Exception:
-                pass
+        """Compat: equivalente a set_phase3() no fluxo com source select."""
+        self.set_phase3()
 
     def close(self):
         if self.window:
