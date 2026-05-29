@@ -7,6 +7,7 @@ import threading
 from lib.helper import *
 import inputstreamhelper
 from lib import xtream, tunein, pluto, imdb, api_vod, hlsretry
+from lib.resolver import Resolver
 
 try:
     from urllib import urlencode
@@ -14,9 +15,9 @@ except ImportError:
     from urllib.parse import urlencode
 
 from lib.player import get_player
-from lib.loading_window import loading_manager
 from lib.skipservice import prefetch_skip_timestamps
 from lib.db_manager import KingDatabaseManager
+from lib.loading_window import loading_manager
 
 db_manager = KingDatabaseManager()
 db_manager.check_auto_expiry()
@@ -94,25 +95,23 @@ IPTV_PROBLEM_LOG = translate(os.path.join(profile, 'iptv_problems_log.txt'))
 def build_series_playlist(imdb_number, season_num, current_episode_num, serie_name, original_name, all_episodes):
     if not all_episodes or not isinstance(all_episodes, list):
         return
-    
     if not isinstance(season_num, int) or not isinstance(current_episode_num, int):
         return
-    
+
     playlist = xbmc.PlayList(xbmc.PLAYLIST_VIDEO)
-    
+
     for episode_data in all_episodes:
         if not isinstance(episode_data, dict):
             continue
-            
         ep_num = episode_data.get('episode')
         if not ep_num or not isinstance(ep_num, int):
             continue
-            
+
         name = episode_data.get('episode_title', '')
         img = episode_data.get('thumbnail', '')
         fanart = episode_data.get('fanart', '')
         description = episode_data.get('description', '')
-        
+
         if ep_num > current_episode_num:
             params = {
                 'serie_name': serie_name,
@@ -125,13 +124,13 @@ def build_series_playlist(imdb_number, season_num, current_episode_num, serie_na
                 'imdbnumber': imdb_number,
                 'description': description
             }
-            
+
             plugin_url = 'plugin://plugin.video.kingiptv/play_resolve_series/{}'.format(urlencode(params))
-            
+
             display_label = name if name else '{}x{}'.format(season_num, str(ep_num).zfill(2))
             list_item = xbmcgui.ListItem(display_label)
             list_item.setArt({'thumb': img, 'icon': img, 'fanart': fanart or img})
-            
+
             kodi_version = int(xbmc.getInfoLabel('System.BuildVersion').split('.')[0])
             if kodi_version >= 20:
                 info_tag = list_item.getVideoInfoTag()
@@ -150,7 +149,7 @@ def build_series_playlist(imdb_number, season_num, current_episode_num, serie_na
                     'season': season_num,
                     'episode': ep_num,
                 })
-            
+
             playlist.add(url=plugin_url, listitem=list_item)
 
 @route('/')
@@ -181,14 +180,14 @@ def settings():
     addon.openSettings()
 
 @route('/playlistiptv')
-def playlistiptv(): 
+def playlistiptv():
     iptv = xtream.parselist(API_CHANNELS)
     if iptv:
         for n, (dns, username, password) in enumerate(iptv):
             n = n + 1
             addMenuItem({'name': 'LISTA {0}'.format(str(n)), 'description': '', 'dns': dns, 'username': str(username), 'password': str(password)}, destiny='/cat_channels')
         end()
-        setview('WideList') 
+        setview('WideList')
     else:
         notify(getString(32013))
 
@@ -197,7 +196,7 @@ def cat_channels(param):
     dns = param['dns']
     username = param['username']
     password = param['password']
-    cat = xtream.API(dns,username,password).channels_category()
+    cat = xtream.API(dns, username, password).channels_category()
     if cat:
         for i in cat:
             name, url = i
@@ -205,7 +204,7 @@ def cat_channels(param):
         end()
         setview('WideList')
     else:
-        url_problem = '{0}/get.php?username={1}&password={2}\n'.format(dns,username,password)
+        url_problem = '{0}/get.php?username={1}&password={2}\n'.format(dns, username, password)
         if six.PY2:
             import io
             open_file = lambda filename, mode: io.open(filename, mode, encoding='utf-8')
@@ -228,12 +227,12 @@ def open_channels(param):
     dns = param['dns']
     username = param['username']
     password = param['password']
-    url = param['url'] 
-    open_ = xtream.API(dns,username,password).channels_open(url)
+    url = param['url']
+    open_ = xtream.API(dns, username, password).channels_open(url)
     if open_:
         setcontent('videos')
         for i in open_:
-            name,link,thumb,desc = i
+            name, link, thumb, desc = i
             addMenuItem({'name': name, 'description': desc, 'iconimage': thumb, 'url': link}, destiny='/play_iptv', folder=False)
         end()
         setview('WideList')
@@ -246,9 +245,12 @@ def play_iptv(param):
     description = param.get('description', '')
     iconimage = param.get('iconimage', '')
     url = param.get('url', '')
-    if '|' in url: url = url.split('|')[0]
-    try: hlsretry.XtreamProxy().start()
-    except: pass
+    if '|' in url:
+        url = url.split('|')[0]
+    try:
+        hlsretry.XtreamProxy().start()
+    except:
+        pass
     proxy_url = f'http://127.0.0.1:{hlsretry.PORT_NUMBER}/?url={quote_plus(url)}'
     play_item = xbmcgui.ListItem(path=proxy_url)
     play_item.setContentLookup(False)
@@ -269,13 +271,11 @@ def channels_pluto():
     if channels:
         setcontent('videos')
         for name, desc, thumb, url in channels:
-            addMenuItem({'name': name, 'description': desc, 'iconimage': thumb,
-                         'url': url, 'playable': 'true'}, destiny='/play_pluto', folder=False)
+            addMenuItem({'name': name, 'description': desc, 'iconimage': thumb, 'url': url, 'playable': 'true'}, destiny='/play_pluto', folder=False)
         end()
         setview('List')
     else:
         notify(getString(32018))
-
 
 @route('/play_pluto')
 def play_pluto(param):
@@ -302,7 +302,9 @@ def play_pluto(param):
     li.setArt({'icon': iconimage or 'DefaultVideo.png', 'thumb': iconimage or 'DefaultVideo.png'})
     tag = li.getVideoInfoTag() if hasattr(li, 'getVideoInfoTag') else None
     if tag:
-        tag.setTitle(name); tag.setPlot(desc); tag.setMediaType('video')
+        tag.setTitle(name)
+        tag.setPlot(desc)
+        tag.setMediaType('video')
     else:
         li.setInfo('video', {'title': name, 'plot': desc})
     xbmcplugin.setResolvedUrl(int(sys.argv[1]), True, li)
@@ -537,7 +539,7 @@ def open_imdb_episodes(param):
     url = param.get('url', '')
     imdb_id = param.get('imdbnumber', '')
     season = param.get('season', '')
-    
+
     itens = imdb.IMDBScraper().imdb_episodes(url)
     if itens:
         get_db().save_season_episodes(
@@ -548,7 +550,6 @@ def open_imdb_episodes(param):
             episodes_data=itens
         )
 
-        # Prefetch de timestamps de skip para toda a temporada em background
         prefetch_skip_timestamps(
             imdb_id=imdb_id,
             season=int(season),
@@ -577,7 +578,8 @@ def open_imdb_episodes(param):
                 'mediatype': 'episode',
                 'playable': True,
                 'playcount': 1 if int(episode_number) in watched_set else 0,
-                'resume_time': resume_map.get(int(episode_number)),            }, destiny='/play_resolve_series', folder=False)
+                'resume_time': resume_map.get(int(episode_number)),
+            }, destiny='/play_resolve_series', folder=False)
 
         end()
         setview('List')
@@ -593,62 +595,80 @@ def play_resolve_movies(param):
     original_name = param.get('original_name', '')
 
     loading_manager.show()
-    
+
     try:
-        result = api_vod.VOD().movie(imdb_number)
-        if result:
-            loading_manager.set_phase2()
-            stream = result
+        players = api_vod.VOD().movie(imdb_number)
 
-            url = stream.split('|')[0] if '|' in stream else stream
-            headers = stream.split('|', 1)[1] if '|' in stream else ''
-
-            is_direct_file = url.lower().endswith(('.mp4', '.mkv', '.avi', '.mov', '.webm', '.ts'))
-
-            play_item = xbmcgui.ListItem(path=url)
-            play_item.setArt({'thumb': iconimage, 'icon': iconimage, 'fanart': fanart or iconimage})
-            play_item.setContentLookup(False)
-
-            if is_direct_file:
-                play_item.setMimeType('video/mp4')
-                if headers:
-                    url_with_headers = f"{url}|{headers}&User-Agent=Mozilla/5.0Referer=https://google.com"
-                    play_item.setPath(url_with_headers)
-            else:
-                play_item.setProperty('inputstream', 'inputstream.adaptive')
-                play_item.setProperty('inputstream.adaptive.manifest_type', 'hls')
-                play_item.setProperty('inputstream.adaptive.original_audio_language', 'pt')
-                if headers:
-                    play_item.setProperty('inputstream.adaptive.stream_headers', headers)
-
-            kodi_version = int(xbmc.getInfoLabel('System.BuildVersion').split('.')[0])
-            if kodi_version >= 20:
-                info_tag = play_item.getVideoInfoTag()
-                info_tag.setTitle(movie_name)
-                info_tag.setPlot(description)
-                info_tag.setIMDBNumber(imdb_number)
-                info_tag.setMediaType('movie')
-                info_tag.setOriginalTitle(original_name)
-                if year:
-                    info_tag.setYear(int(year))
-            else:
-                info_dict = {
-                    'title': movie_name,
-                    'plot': description,
-                    'imdbnumber': imdb_number,
-                    'mediatype': 'movie',
-                    'originaltitle': original_name
-                }
-                if year:
-                    info_dict['year'] = int(year)
-                play_item.setInfo('video', info_dict)
-
-            notify(getString(32020))
-            xbmcplugin.setResolvedUrl(int(sys.argv[1]), True, play_item)
-            loading_manager.close()
-        else:
+        if not players:
             loading_manager.force_close()
             notify(getString(32016))
+            return
+
+        idx = loading_manager.show_source_select(players)
+        if idx < 0:
+            loading_manager.force_close()
+            return
+
+        loading_manager.set_phase3()
+
+        _, stream = players[idx]
+
+        resolver = Resolver()
+        stream, sub = resolver.resolverurls(stream)
+
+        if not stream:
+            loading_manager.force_close()
+            notify(getString(32016))
+            return
+
+        url = stream.split('|')[0] if '|' in stream else stream
+        headers = stream.split('|', 1)[1] if '|' in stream else ''
+
+        is_direct_file = url.lower().endswith(('.mp4', '.mkv', '.avi', '.mov', '.webm', '.ts'))
+
+        play_item = xbmcgui.ListItem(path=url)
+        play_item.setArt({'thumb': iconimage, 'icon': iconimage, 'fanart': fanart or iconimage})
+        play_item.setContentLookup(False)
+
+        if is_direct_file:
+            play_item.setMimeType('video/mp4')
+            if headers:
+                play_item.setPath(f"{url}|{headers}")
+        else:
+            play_item.setProperty('inputstream', 'inputstream.adaptive')
+            play_item.setProperty('inputstream.adaptive.manifest_type', 'hls')
+            play_item.setProperty('inputstream.adaptive.original_audio_language', 'pt')
+            if headers:
+                play_item.setProperty('inputstream.adaptive.stream_headers', headers)
+
+        if sub:
+            play_item.setSubtitles([sub])
+
+        kodi_version = int(xbmc.getInfoLabel('System.BuildVersion').split('.')[0])
+        if kodi_version >= 20:
+            info_tag = play_item.getVideoInfoTag()
+            info_tag.setTitle(movie_name)
+            info_tag.setPlot(description)
+            info_tag.setIMDBNumber(imdb_number)
+            info_tag.setMediaType('movie')
+            info_tag.setOriginalTitle(original_name)
+            if year:
+                info_tag.setYear(int(year))
+        else:
+            info_dict = {
+                'title': movie_name,
+                'plot': description,
+                'imdbnumber': imdb_number,
+                'mediatype': 'movie',
+                'originaltitle': original_name
+            }
+            if year:
+                info_dict['year'] = int(year)
+            play_item.setInfo('video', info_dict)
+
+        xbmcplugin.setResolvedUrl(int(sys.argv[1]), True, play_item)
+        loading_manager.close()
+
     except Exception as e:
         loading_manager.force_close()
         notify(getString(32016))
@@ -664,110 +684,126 @@ def play_resolve_series(param):
     fanart = param.get('fanart', '')
     imdb_number = param.get('imdbnumber', '')
     description = param.get('description', '')
-    
+
     if not episode or not season:
         notify(getString(32021))
         return
-    
+
     if not str(episode).isdigit() or not str(season).isdigit():
         notify(getString(32022))
         return
-    
+
     current_episode_num = int(episode)
     season_num = int(season)
-    
+
     if current_episode_num <= 0 or season_num <= 0:
         notify(getString(32022))
         return
 
     loading_manager.show()
-    
+
     try:
-        result = api_vod.VOD().tvshows(imdb_number, season_num, current_episode_num)
-        if result:
-            loading_manager.set_phase2()
-            stream = result
+        players = api_vod.VOD().tvshows(imdb_number, season_num, current_episode_num)
 
-            url = stream.split('|')[0] if '|' in stream else stream
-            headers = stream.split('|', 1)[1] if '|' in stream else ''
-
-            is_direct_file = url.lower().endswith(('.mp4', '.mkv', '.avi', '.mov', '.webm', '.ts'))
-
-            playback_title = episode_title
-
-            play_item = xbmcgui.ListItem(label=playback_title, path=url)
-            play_item.setArt({'thumb': iconimage, 'icon': iconimage, 'fanart': fanart or iconimage})
-            play_item.setContentLookup(False)
-
-            if is_direct_file:
-                play_item.setMimeType('video/mp4')
-                if headers:
-                    url_with_headers = f"{url}|{headers}&User-Agent=Mozilla/5.0Referer=https://google.com"
-                    play_item.setPath(url_with_headers)
-            else:
-                play_item.setProperty('inputstream', 'inputstream.adaptive')
-                play_item.setProperty('inputstream.adaptive.manifest_type', 'hls')
-                play_item.setProperty('inputstream.adaptive.original_audio_language', 'pt')
-                if headers:
-                    play_item.setProperty('inputstream.adaptive.stream_headers', headers)
-
-            kodi_version = int(xbmc.getInfoLabel('System.BuildVersion').split('.')[0])
-            if kodi_version >= 20:
-                info_tag = play_item.getVideoInfoTag()
-                info_tag.setTitle(playback_title)
-                info_tag.setTvShowTitle(serie_name)
-                info_tag.setOriginalTitle(original_name)
-                info_tag.setPlot(description)
-                info_tag.setIMDBNumber(imdb_number)
-                info_tag.setMediaType('episode')
-                info_tag.setSeason(season_num)
-                info_tag.setEpisode(current_episode_num)
-            else:
-                info_dict = {
-                    'title': playback_title,
-                    'tvshowtitle': serie_name,
-                    'originaltitle': original_name,
-                    'plot': description,
-                    'imdbnumber': imdb_number,
-                    'mediatype': 'episode',
-                    'season': season_num,
-                    'episode': current_episode_num,
-                }
-                play_item.setInfo('video', info_dict)
-
-            notify(getString(32020))
-            xbmcplugin.setResolvedUrl(int(sys.argv[1]), True, play_item)
-            loading_manager.close()
-            
-            playlist = xbmc.PlayList(xbmc.PLAYLIST_VIDEO)
-            current_position = playlist.getposition()
-            
-            if current_position == 0 or playlist.size() <= 1:
-                all_episodes = get_db().get_season_episodes(imdb_number, season_num)
-                if all_episodes:
-                    build_series_playlist(
-                        imdb_number=imdb_number,
-                        season_num=season_num,
-                        current_episode_num=current_episode_num,
-                        serie_name=serie_name,
-                        original_name=original_name,
-                        all_episodes=all_episodes
-                    )
-            
-            player = get_player()
-
-            resume_data = get_db().get_resume_time(imdb_number, season_num, current_episode_num)
-            resume_time = resume_data[0] if resume_data else None
-
-            threading.Thread(
-                target=player.start_monitoring,
-                args=(imdb_number, season_num, current_episode_num),
-                kwargs={'resume_time': resume_time},
-                daemon=True
-            ).start()
-        else:
+        if not players:
             loading_manager.force_close()
             notify(getString(32016))
+            return
+
+        idx = loading_manager.show_source_select(players)
+        if idx < 0:
+            loading_manager.force_close()
+            return
+
+        loading_manager.set_phase3()
+
+        _, stream = players[idx]
+
+        resolver = Resolver()
+        stream, sub = resolver.resolverurls(stream)
+
+        if not stream:
+            loading_manager.force_close()
+            notify(getString(32016))
+            return
+
+        url = stream.split('|')[0] if '|' in stream else stream
+        headers = stream.split('|', 1)[1] if '|' in stream else ''
+
+        is_direct_file = url.lower().endswith(('.mp4', '.mkv', '.avi', '.mov', '.webm', '.ts'))
+        playback_title = episode_title
+
+        play_item = xbmcgui.ListItem(label=playback_title, path=url)
+        play_item.setArt({'thumb': iconimage, 'icon': iconimage, 'fanart': fanart or iconimage})
+        play_item.setContentLookup(False)
+
+        if is_direct_file:
+            play_item.setMimeType('video/mp4')
+            if headers:
+                play_item.setPath(f"{url}|{headers}")
+        else:
+            play_item.setProperty('inputstream', 'inputstream.adaptive')
+            play_item.setProperty('inputstream.adaptive.manifest_type', 'hls')
+            play_item.setProperty('inputstream.adaptive.original_audio_language', 'pt')
+            if headers:
+                play_item.setProperty('inputstream.adaptive.stream_headers', headers)
+
+        if sub:
+            play_item.setSubtitles([sub])
+
+        kodi_version = int(xbmc.getInfoLabel('System.BuildVersion').split('.')[0])
+        if kodi_version >= 20:
+            info_tag = play_item.getVideoInfoTag()
+            info_tag.setTitle(playback_title)
+            info_tag.setTvShowTitle(serie_name)
+            info_tag.setOriginalTitle(original_name)
+            info_tag.setPlot(description)
+            info_tag.setIMDBNumber(imdb_number)
+            info_tag.setMediaType('episode')
+            info_tag.setSeason(season_num)
+            info_tag.setEpisode(current_episode_num)
+        else:
+            info_dict = {
+                'title': playback_title,
+                'tvshowtitle': serie_name,
+                'originaltitle': original_name,
+                'plot': description,
+                'imdbnumber': imdb_number,
+                'mediatype': 'episode',
+                'season': season_num,
+                'episode': current_episode_num,
+            }
+            play_item.setInfo('video', info_dict)
+
+        xbmcplugin.setResolvedUrl(int(sys.argv[1]), True, play_item)
+        loading_manager.close()
+
+        playlist = xbmc.PlayList(xbmc.PLAYLIST_VIDEO)
+        current_position = playlist.getposition()
+
+        if current_position == 0 or playlist.size() <= 1:
+            all_episodes = get_db().get_season_episodes(imdb_number, season_num)
+            if all_episodes:
+                build_series_playlist(
+                    imdb_number=imdb_number,
+                    season_num=season_num,
+                    current_episode_num=current_episode_num,
+                    serie_name=serie_name,
+                    original_name=original_name,
+                    all_episodes=all_episodes
+                )
+
+        player = get_player()
+
+        resume_data = get_db().get_resume_time(imdb_number, season_num, current_episode_num)
+        resume_time = resume_data[0] if resume_data else None
+
+        threading.Thread(
+            target=player.start_monitoring,
+            args=(imdb_number, season_num, current_episode_num),
+            kwargs={'resume_time': resume_time},
+            daemon=True
+        ).start()
     except Exception as e:
         loading_manager.force_close()
         notify(getString(32016))
