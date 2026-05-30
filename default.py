@@ -245,8 +245,6 @@ def play_iptv(param):
     description = param.get('description', '')
     iconimage = param.get('iconimage', '')
     url = param.get('url', '')
-    if '|' in url:
-        url = url.split('|')[0]
     try:
         hlsretry.XtreamProxy().start()
     except:
@@ -621,25 +619,9 @@ def play_resolve_movies(param):
             notify(getString(32016))
             return
 
-        url = stream.split('|')[0] if '|' in stream else stream
-        headers = stream.split('|', 1)[1] if '|' in stream else ''
-
-        is_direct_file = url.lower().endswith(('.mp4', '.mkv', '.avi', '.mov', '.webm', '.ts'))
-
-        play_item = xbmcgui.ListItem(path=url)
+        play_item = xbmcgui.ListItem(path=stream)
         play_item.setArt({'thumb': iconimage, 'icon': iconimage, 'fanart': fanart or iconimage})
         play_item.setContentLookup(False)
-
-        if is_direct_file:
-            play_item.setMimeType('video/mp4')
-            if headers:
-                play_item.setPath(f"{url}|{headers}")
-        else:
-            play_item.setProperty('inputstream', 'inputstream.adaptive')
-            play_item.setProperty('inputstream.adaptive.manifest_type', 'hls')
-            play_item.setProperty('inputstream.adaptive.original_audio_language', 'pt')
-            if headers:
-                play_item.setProperty('inputstream.adaptive.stream_headers', headers)
 
         if sub:
             play_item.setSubtitles([sub])
@@ -727,26 +709,11 @@ def play_resolve_series(param):
             notify(getString(32016))
             return
 
-        url = stream.split('|')[0] if '|' in stream else stream
-        headers = stream.split('|', 1)[1] if '|' in stream else ''
-
-        is_direct_file = url.lower().endswith(('.mp4', '.mkv', '.avi', '.mov', '.webm', '.ts'))
         playback_title = episode_title
 
-        play_item = xbmcgui.ListItem(label=playback_title, path=url)
+        play_item = xbmcgui.ListItem(label=playback_title, path=stream)
         play_item.setArt({'thumb': iconimage, 'icon': iconimage, 'fanart': fanart or iconimage})
         play_item.setContentLookup(False)
-
-        if is_direct_file:
-            play_item.setMimeType('video/mp4')
-            if headers:
-                play_item.setPath(f"{url}|{headers}")
-        else:
-            play_item.setProperty('inputstream', 'inputstream.adaptive')
-            play_item.setProperty('inputstream.adaptive.manifest_type', 'hls')
-            play_item.setProperty('inputstream.adaptive.original_audio_language', 'pt')
-            if headers:
-                play_item.setProperty('inputstream.adaptive.stream_headers', headers)
 
         if sub:
             play_item.setSubtitles([sub])
