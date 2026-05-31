@@ -707,6 +707,9 @@ def play_resolve_series(param):
         if not stream:
             loading_manager.force_close()
             notify(getString(32016))
+            playlist = xbmc.PlayList(xbmc.PLAYLIST_VIDEO)
+            playlist.clear()
+            xbmcplugin.setResolvedUrl(int(sys.argv[1]), False, xbmcgui.ListItem())
             return
 
         playback_title = episode_title
