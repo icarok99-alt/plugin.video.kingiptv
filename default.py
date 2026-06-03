@@ -233,7 +233,7 @@ def open_channels(param):
         setcontent('videos')
         for i in open_:
             name, link, thumb, desc = i
-            addMenuItem({'name': name, 'description': desc, 'iconimage': thumb, 'url': link}, destiny='/play_iptv')
+            addMenuItem({'name': name, 'description': desc, 'iconimage': thumb, 'url': link, 'playable': 'true'}, destiny='/play_iptv')
         end()
         setview('WideList')
     else:
@@ -261,7 +261,7 @@ def play_iptv(param):
         info_tag.setMediaType('video')
     else:
         play_item.setInfo('video', {'title': name, 'plot': description})
-    xbmc.Player().play(proxy_url, play_item)
+    xbmcplugin.setResolvedUrl(int(sys.argv[1]), True, play_item)
 
 @route('/channels_pluto')
 def channels_pluto():
