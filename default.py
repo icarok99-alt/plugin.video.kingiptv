@@ -233,7 +233,7 @@ def open_channels(param):
         setcontent('videos')
         for i in open_:
             name, link, thumb, desc = i
-            addMenuItem({'name': name, 'description': desc, 'iconimage': thumb, 'url': link}, destiny='/play_iptv', folder=False)
+            addMenuItem({'name': name, 'description': desc, 'iconimage': thumb, 'url': link}, destiny='/play_iptv')
         end()
         setview('WideList')
     else:
@@ -269,7 +269,7 @@ def channels_pluto():
     if channels:
         setcontent('videos')
         for name, desc, thumb, url in channels:
-            addMenuItem({'name': name, 'description': desc, 'iconimage': thumb, 'url': url, 'playable': 'true'}, destiny='/play_pluto', folder=False)
+            addMenuItem({'name': name, 'description': desc, 'iconimage': thumb, 'url': url, 'playable': 'true'}, destiny='/play_pluto')
         end()
         setview('List')
     else:
@@ -371,7 +371,7 @@ def find_movies():
                         'original_name': original_name,
                         'year': year,
                         'playable': True
-                    }, destiny='/play_resolve_movies', folder=False)
+                    }, destiny='/play_resolve_movies')
                 end()
                 setview('List')
 
@@ -421,7 +421,7 @@ def movies_250(param=None):
                 'original_name': original_name,
                 'year': year,
                 'playable': True
-            }, destiny='/play_resolve_movies', folder=False)
+            }, destiny='/play_resolve_movies')
         if end_ < len(all_items):
             addMenuItem({'name': getString(32012), 'page': page + 1}, destiny='/imdb_movies_250')
         end()
@@ -474,7 +474,7 @@ def movies_popular(param=None):
                 'original_name': original_name,
                 'year': year,
                 'playable': True
-            }, destiny='/play_resolve_movies', folder=False)
+            }, destiny='/play_resolve_movies')
         if end_ < len(all_items):
             addMenuItem({'name': getString(32012), 'page': page + 1}, destiny='/imdb_movies_popular')
         end()
@@ -577,7 +577,7 @@ def open_imdb_episodes(param):
                 'playable': True,
                 'playcount': 1 if int(episode_number) in watched_set else 0,
                 'resume_time': resume_map.get(int(episode_number)),
-            }, destiny='/play_resolve_series', folder=False)
+            }, destiny='/play_resolve_series')
 
         end()
         setview('List')
@@ -682,6 +682,14 @@ def play_resolve_series(param):
         notify(getString(32022))
         return
 
+    resume_data = get_db().get_resume_time(imdb_number, season_num, current_episode_num)
+    resume_time = None
+    if resume_data and resume_data[0] > 0:
+        if ask_resume(resume_data[0]):
+            resume_time = resume_data[0]
+        else:
+            get_db().clear_resume_time(imdb_number, season_num, current_episode_num)
+
     loading_manager.show()
 
     try:
@@ -764,9 +772,6 @@ def play_resolve_series(param):
                 )
 
         player = get_player()
-
-        resume_data = get_db().get_resume_time(imdb_number, season_num, current_episode_num)
-        resume_time = resume_data[0] if resume_data else None
 
         threading.Thread(
             target=player.start_monitoring,

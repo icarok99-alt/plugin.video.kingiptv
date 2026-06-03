@@ -106,6 +106,25 @@ def yesno(heading="",message="",nolabel="Nao",yeslabel="Sim"):
         q = dialog_.yesno(heading=heading, message=message, nolabel=nolabel, yeslabel=yeslabel)
     return q        
 
+def format_resume_time(seconds):
+    seconds = int(seconds)
+    h = seconds // 3600
+    m = (seconds % 3600) // 60
+    s = seconds % 60
+    if h > 0:
+        return '{:d}:{:02d}:{:02d}'.format(h, m, s)
+    return '{:d}:{:02d}'.format(m, s)
+
+def ask_resume(position):
+    time_str = format_resume_time(position)
+    message = 'Você deseja retornar de onde parou {}?'.format(time_str)
+    return dialog_.yesno(
+        heading=addonName,
+        message=message,
+        nolabel='Não',
+        yeslabel='Sim',
+    )
+
 def route(r):
     try:
         route_decorator = r.split('/')[1]
@@ -223,7 +242,7 @@ def notify(msg):
     except:
         pass
 
-def addMenuItem(params={}, destiny='', folder=True):
+def addMenuItem(params={}, destiny=''):
     try:
         destiny = destiny.split('/')[1]
     except:
@@ -323,11 +342,7 @@ def addMenuItem(params={}, destiny='', folder=True):
             info.setPlaycount(int(playcount))
         else:
             li.setInfo('video', {'playcount': int(playcount)})
-    resume_time = params.get('resume_time', None)
-    if resume_time is not None:
-        position, total = resume_time
-        li.setProperty('ResumeTime', str(int(position)))
-        li.setProperty('TotalTime', str(int(total)))
+
     season_num = params.get('season_num', season)
     episode_num = params.get('episode_num', episode)
     if season_num:
@@ -340,13 +355,15 @@ def addMenuItem(params={}, destiny='', folder=True):
             info.setEpisode(int(episode_num))
         else:
             li.setInfo('video', {'episode': int(episode_num)})
-    if playable and folder == False and not playable == 'false':
+    is_playable = bool(playable and playable != 'false')
+    is_folder = not is_playable
+    if is_playable:
         li.setProperty('IsPlayable', 'true')        
     if fanart:
         li.setProperty('fanart_image', fanart)
     else:
         li.setProperty('fanart_image', addonFanart)
-    xbmcplugin.addDirectoryItem(handle=handle, url=u, listitem=li, isFolder=folder)
+    xbmcplugin.addDirectoryItem(handle=handle, url=u, listitem=li, isFolder=is_folder)
 
 def play_video(params):
     name = params.get('name', '')
