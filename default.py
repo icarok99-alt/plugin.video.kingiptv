@@ -233,7 +233,7 @@ def open_channels(param):
         setcontent('videos')
         for i in open_:
             name, link, thumb, desc = i
-            addMenuItem({'name': name, 'description': desc, 'iconimage': thumb, 'url': link}, destiny='/play_iptv')
+            addMenuItem({'name': name, 'description': desc, 'iconimage': thumb, 'url': link}, destiny='/play_iptv', folder=False)
         end()
         setview('WideList')
     else:
@@ -269,7 +269,7 @@ def channels_pluto():
     if channels:
         setcontent('videos')
         for name, desc, thumb, url in channels:
-            addMenuItem({'name': name, 'description': desc, 'iconimage': thumb, 'url': url, 'playable': 'true'}, destiny='/play_pluto')
+            addMenuItem({'name': name, 'description': desc, 'iconimage': thumb, 'url': url, 'playable': 'true'}, destiny='/play_pluto', folder=False)
         end()
         setview('List')
     else:
