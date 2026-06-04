@@ -212,3 +212,11 @@ msgstr ""
 msgctxt "#33004"
 msgid "Are you sure you want to delete the database?"
 msgstr ""
+
+msgctxt "#32120"
+msgid "Autoplay"
+msgstr ""
+
+msgctxt "#32121"
+msgid "kingIPTV auto play"
+msgstr ""

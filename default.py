@@ -582,6 +582,34 @@ def open_imdb_episodes(param):
         end()
         setview('List')
 
+AUTO_PLAY_PRIORITY = ['byse', 'abyss', 'upns']
+
+def _sort_players_by_priority(players):
+    priority_map = {name: idx for idx, name in enumerate(AUTO_PLAY_PRIORITY)}
+
+    def _key(item):
+        source_name = (item[0] or '').lower()
+        for p_name, p_idx in priority_map.items():
+            if p_name in source_name:
+                return p_idx
+        return len(AUTO_PLAY_PRIORITY)
+
+    resolver = Resolver()
+    for source_name, stream_url in sorted(players, key=_key):
+        xbmc.log('[KingIPTV] Tentando source "{}" ...'.format(source_name), xbmc.LOGINFO)
+        try:
+            resolved, sub = resolver.resolverurls(stream_url)
+            if resolved:
+                xbmc.log('[KingIPTV] Source "{}" OK.'.format(source_name), xbmc.LOGINFO)
+                return resolved, sub
+            xbmc.log('[KingIPTV] Source "{}" falhou. Tentando proximo...'.format(source_name), xbmc.LOGWARNING)
+        except Exception as e:
+            xbmc.log('[KingIPTV] Source "{}" erro: {}. Tentando proximo...'.format(source_name, e), xbmc.LOGWARNING)
+
+    xbmc.log('[KingIPTV] Todos os sources falharam.', xbmc.LOGERROR)
+    return None, None
+
+
 @route('/play_resolve_movies')
 def play_resolve_movies(param):
     movie_name = param.get('movie_name', param.get('name', ''))
@@ -602,17 +630,19 @@ def play_resolve_movies(param):
             notify(getString(32016))
             return
 
-        idx = loading_manager.show_source_select(players)
-        if idx < 0:
-            loading_manager.force_close()
-            return
+        autoplay = xbmcaddon.Addon().getSettingBool('autoplay_enabled')
 
-        loading_manager.set_phase3()
-
-        _, stream = players[idx]
-
-        resolver = Resolver()
-        stream, sub = resolver.resolverurls(stream)
+        if autoplay:
+            loading_manager.set_phase3()
+            stream, sub = _sort_players_by_priority(players)
+        else:
+            idx = loading_manager.show_source_select(players)
+            if idx < 0:
+                loading_manager.force_close()
+                return
+            loading_manager.set_phase3()
+            _, raw_stream = players[idx]
+            stream, sub = Resolver().resolverurls(raw_stream)
 
         if not stream:
             loading_manager.force_close()
@@ -700,17 +730,19 @@ def play_resolve_series(param):
             notify(getString(32016))
             return
 
-        idx = loading_manager.show_source_select(players)
-        if idx < 0:
-            loading_manager.force_close()
-            return
+        autoplay = xbmcaddon.Addon().getSettingBool('autoplay_enabled')
 
-        loading_manager.set_phase3()
-
-        _, stream = players[idx]
-
-        resolver = Resolver()
-        stream, sub = resolver.resolverurls(stream)
+        if autoplay:
+            loading_manager.set_phase3()
+            stream, sub = _sort_players_by_priority(players)
+        else:
+            idx = loading_manager.show_source_select(players)
+            if idx < 0:
+                loading_manager.force_close()
+                return
+            loading_manager.set_phase3()
+            _, raw_stream = players[idx]
+            stream, sub = Resolver().resolverurls(raw_stream)
 
         if not stream:
             loading_manager.force_close()
