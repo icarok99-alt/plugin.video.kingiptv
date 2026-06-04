@@ -10,6 +10,9 @@
         <setting id="skip_auto_skip" type="bool" label="32113" default="false"/>
         <setting id="skip_countdown_seconds" type="number" label="32114" default="5"/>
     </category>
+    <category label="32120">
+        <setting id="autoplay_enabled" type="bool" label="32121" default="true"/>
+    </category>
     <category label="33000">
         <setting id="db_auto_cleanup_enabled" type="bool" label="33001" default="false"/>
         <setting id="db_cleanup_days" type="number" label="33002" default="7" enable="eq(-1,true)"/>

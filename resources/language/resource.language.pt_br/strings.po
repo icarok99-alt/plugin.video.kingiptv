@@ -212,3 +212,11 @@ msgstr "Excluir banco de dados"
 msgctxt "#33004"
 msgid "Are you sure you want to delete the database?"
 msgstr "Tem certeza de que deseja excluir o banco de dados?"
+
+msgctxt "#32120"
+msgid "Autoplay"
+msgstr "Reprodução automática"
+
+msgctxt "#32121"
+msgid "kingIPTV reprodução automática"
+msgstr "kingIPTV reprodução automática"
