@@ -215,8 +215,8 @@ msgstr ""
 
 msgctxt "#32120"
 msgid "Autoplay"
-msgstr "Autoplay"
+msgstr ""
 
 msgctxt "#32121"
 msgid "kingIPTV auto play"
-msgstr "kingIPTV auto play"
+msgstr ""
