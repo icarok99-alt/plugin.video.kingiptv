@@ -99,6 +99,7 @@ def build_series_playlist(imdb_number, season_num, current_episode_num, serie_na
         return
 
     playlist = xbmc.PlayList(xbmc.PLAYLIST_VIDEO)
+    playlist.clear()
 
     for episode_data in all_episodes:
         if not isinstance(episode_data, dict):
@@ -112,7 +113,7 @@ def build_series_playlist(imdb_number, season_num, current_episode_num, serie_na
         fanart = episode_data.get('fanart', '')
         description = episode_data.get('description', '')
 
-        if ep_num > current_episode_num:
+        if ep_num >= current_episode_num:
             params = {
                 'serie_name': serie_name,
                 'original_name': original_name,
@@ -647,6 +648,7 @@ def play_resolve_movies(param):
         if not stream:
             loading_manager.force_close()
             notify(getString(32016))
+            xbmcplugin.setResolvedUrl(int(sys.argv[1]), False, xbmcgui.ListItem())
             return
 
         play_item = xbmcgui.ListItem(path=stream)
@@ -684,8 +686,7 @@ def play_resolve_movies(param):
     except Exception as e:
         loading_manager.force_close()
         notify(getString(32016))
-
-@route('/play_resolve_series')
+        xbmcplugin.setResolvedUrl(int(sys.argv[1]), False, xbmcgui.ListItem())
 def play_resolve_series(param):
     serie_name = param.get('serie_name', '')
     original_name = param.get('original_name', '')
@@ -747,9 +748,8 @@ def play_resolve_series(param):
         if not stream:
             loading_manager.force_close()
             notify(getString(32016))
-            playlist = xbmc.PlayList(xbmc.PLAYLIST_VIDEO)
-            playlist.clear()
             xbmcplugin.setResolvedUrl(int(sys.argv[1]), False, xbmcgui.ListItem())
+            xbmc.PlayList(xbmc.PLAYLIST_VIDEO).clear()
             return
 
         playback_title = episode_title
@@ -789,9 +789,8 @@ def play_resolve_series(param):
         loading_manager.close()
 
         playlist = xbmc.PlayList(xbmc.PLAYLIST_VIDEO)
-        current_position = playlist.getposition()
 
-        if current_position == 0 or playlist.size() <= 1:
+        if playlist.size() <= 1:
             all_episodes = get_db().get_season_episodes(imdb_number, season_num)
             if all_episodes:
                 build_series_playlist(
@@ -814,3 +813,5 @@ def play_resolve_series(param):
     except Exception as e:
         loading_manager.force_close()
         notify(getString(32016))
+        xbmcplugin.setResolvedUrl(int(sys.argv[1]), False, xbmcgui.ListItem())
+        xbmc.PlayList(xbmc.PLAYLIST_VIDEO).clear()
