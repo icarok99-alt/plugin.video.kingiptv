@@ -582,7 +582,7 @@ def open_imdb_episodes(param):
         end()
         setview('List')
 
-AUTO_PLAY_PRIORITY = ['upns', 'byse', 'abyss']
+AUTO_PLAY_PRIORITY = ['byse', 'abyss', 'upns']
 
 def _sort_players_by_priority(players):
     priority_map = {name: idx for idx, name in enumerate(AUTO_PLAY_PRIORITY)}
