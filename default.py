@@ -687,6 +687,8 @@ def play_resolve_movies(param):
         loading_manager.force_close()
         notify(getString(32016))
         xbmcplugin.setResolvedUrl(int(sys.argv[1]), False, xbmcgui.ListItem())
+
+@route('/play_resolve_series')
 def play_resolve_series(param):
     serie_name = param.get('serie_name', '')
     original_name = param.get('original_name', '')
