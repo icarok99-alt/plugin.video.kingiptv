@@ -655,6 +655,14 @@ def play_resolve_movies(param):
         play_item.setArt({'thumb': iconimage, 'icon': iconimage, 'fanart': fanart or iconimage})
         play_item.setContentLookup(False)
 
+        stream_lower = stream.lower()
+        if '.mpd' in stream_lower:
+            play_item.setMimeType('application/dash+xml')
+        elif '.m3u8' in stream_lower or 'hls' in stream_lower:
+            play_item.setMimeType('application/x-mpegURL')
+        elif stream_lower.endswith(('.mp4', '.mkv', '.avi', '.mov', '.webm', '.ts')):
+            play_item.setMimeType('video/mp4')
+
         if sub:
             play_item.setSubtitles([sub])
 
@@ -759,6 +767,14 @@ def play_resolve_series(param):
         play_item = xbmcgui.ListItem(label=playback_title, path=stream)
         play_item.setArt({'thumb': iconimage, 'icon': iconimage, 'fanart': fanart or iconimage})
         play_item.setContentLookup(False)
+
+        stream_lower = stream.lower()
+        if '.mpd' in stream_lower:
+            play_item.setMimeType('application/dash+xml')
+        elif '.m3u8' in stream_lower or 'hls' in stream_lower:
+            play_item.setMimeType('application/x-mpegURL')
+        elif stream_lower.endswith(('.mp4', '.mkv', '.avi', '.mov', '.webm', '.ts')):
+            play_item.setMimeType('video/mp4')
 
         if sub:
             play_item.setSubtitles([sub])
