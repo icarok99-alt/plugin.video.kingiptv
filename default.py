@@ -56,7 +56,7 @@ try:
                         return datetime.strptime(content, '%d-%m-%Y')
                     except ValueError:
                         pass
-        return datetime.strptime('29-05-2026', '%d-%m-%Y')
+        return datetime.strptime('12-06-2026', '%d-%m-%Y')
 
     def save_local_date(date_str):
         with open(UPDATE_CHECK_FILE, 'w') as f:
