@@ -449,12 +449,14 @@ def _download_epg_xml(dns, username, password):
                         break
                     sample_checked = True
 
-            if not sample_checked:
-                continue
-
             content = b''.join(chunks)
             if len(content) < 256:
                 continue
+
+            if not sample_checked:
+                sample = content[:512].lower()
+                if b'<tv' not in sample and b'<xmltv' not in sample and b'<epg' not in sample:
+                    continue
 
             tmp = paths['xml'] + '.tmp'
             with open(tmp, 'wb') as f:
@@ -556,9 +558,15 @@ def _ensure_epg_background(dns, username, password):
 
     def _worker():
         try:
-            if not _epg_xml_fresh(dns):
-                _download_epg_xml(dns, username, password)
-            _build_epg_index(dns)
+            xml_fresh   = _epg_xml_fresh(dns)
+            index_fresh = _epg_index_fresh(dns)
+
+            if not index_fresh:
+                if not xml_fresh:
+                    if _download_epg_xml(dns, username, password):
+                        _build_epg_index(dns)
+                else:
+                    _build_epg_index(dns)
         except Exception:
             pass
         finally:
@@ -569,13 +577,6 @@ def _ensure_epg_background(dns, username, password):
     t.daemon = True
     t.start()
 
-def _wait_for_epg_index(dns, max_wait=8.0):
-    deadline = time.time() + max_wait
-    while time.time() < deadline:
-        if _epg_index_fresh(dns):
-            return True
-        time.sleep(0.4)
-    return False
 
 def load_epg_index(dns):
     with _EPG_INDEX_LOCK:

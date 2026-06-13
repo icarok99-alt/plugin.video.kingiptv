@@ -218,6 +218,7 @@ def cat_channels(param):
     dns = param['dns']
     username = param['username']
     password = param['password']
+    xtream._ensure_epg_background(dns, username, password)
     cat = xtream.API(dns, username, password).channels_category()
     if cat:
         for i in cat:
