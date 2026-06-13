@@ -6,7 +6,28 @@ import json
 import threading
 from lib.helper import *
 import inputstreamhelper
-from lib import xtream, tunein, pluto, imdb, api_vod, hlsretry
+from lib import xtream, tunein, pluto, imdb, api_vod
+from lib.proxy import UnifiedServer, PROXY_PORT
+
+_proxy_server   = None
+_proxy_lock     = threading.Lock()
+
+def _start_proxy_if_needed():
+    global _proxy_server
+    if _proxy_server is not None:
+        return PROXY_PORT
+    with _proxy_lock:
+        if _proxy_server is not None:
+            return PROXY_PORT
+        try:
+            server = UnifiedServer(port=PROXY_PORT)
+            t = threading.Thread(target=server.start)
+            t.daemon = True
+            t.start()
+            _proxy_server = server
+        except Exception:
+            pass
+    return PROXY_PORT
 from lib.resolver import Resolver
 
 try:
@@ -197,6 +218,7 @@ def cat_channels(param):
     dns = param['dns']
     username = param['username']
     password = param['password']
+    xtream._ensure_epg_background(dns, username, password)
     cat = xtream.API(dns, username, password).channels_category()
     if cat:
         for i in cat:
@@ -246,11 +268,7 @@ def play_iptv(param):
     description = param.get('description', '')
     iconimage = param.get('iconimage', '')
     url = param.get('url', '')
-    try:
-        hlsretry.XtreamProxy().start()
-    except:
-        pass
-    proxy_url = f'http://127.0.0.1:{hlsretry.PORT_NUMBER}/?url={quote_plus(url)}'
+    proxy_url = 'http://127.0.0.1:{}/?url={}'.format(_start_proxy_if_needed(), quote_plus(url))
     play_item = xbmcgui.ListItem(path=proxy_url)
     play_item.setContentLookup(False)
     play_item.setArt({"icon": iconimage or "DefaultVideo.png", "thumb": iconimage or "DefaultVideo.png"})
@@ -609,7 +627,6 @@ def _sort_players_by_priority(players):
 
     xbmc.log('[KingIPTV] Todos os sources falharam.', xbmc.LOGERROR)
     return None, None
-
 
 @route('/play_resolve_movies')
 def play_resolve_movies(param):
