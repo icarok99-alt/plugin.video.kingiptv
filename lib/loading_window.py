@@ -1,50 +1,69 @@
 # -*- coding: utf-8 -*-
 
-import xbmc
-import xbmcgui
-import xbmcaddon
+import os
 import threading
 import time
-import os
+
+import xbmc
+import xbmcaddon
+import xbmcgui
 
 
 class _PlaybackMonitor(xbmc.Player):
 
     def __init__(self):
         super().__init__()
-        self._event = threading.Event()
-
-    def onPlayBackStarted(self):
-        self._event.set()
+        self._av_ready  = threading.Event()
+        self._failed    = threading.Event()
+        self._cancelled = threading.Event()
+        self._av_fired  = False
 
     def onAVStarted(self):
-        self._event.set()
+        if not self._av_fired:
+            self._av_fired = True
+            self._av_ready.set()
 
     def onPlayBackError(self):
-        self._event.set()
+        if not self._av_fired:
+            self._failed.set()
 
     def onPlayBackStopped(self):
-        self._event.set()
+        if not self._av_fired:
+            self._failed.set()
+
+    def onPlayBackFailed(self):
+        if not self._av_fired:
+            self._failed.set()
 
     def reset(self):
-        self._event.clear()
+        self._av_ready.clear()
+        self._failed.clear()
+        self._cancelled.clear()
+        self._av_fired = False
 
-    def wait_for_playback(self, timeout=20):
-        monitor = xbmc.Monitor()
-        elapsed = 0
-        interval = 0.2
+    def cancel(self):
+        self._cancelled.set()
 
-        while elapsed < timeout:
-            if self._event.is_set():
+    def wait_until_playing(self, max_wait=45.0):
+        kodi_monitor  = xbmc.Monitor()
+        deadline      = time.monotonic() + max_wait
+        poll_interval = 0.25
+
+        while time.monotonic() < deadline:
+            if self._cancelled.is_set():
+                return False
+            if self._av_ready.is_set():
                 return True
+            if self._failed.is_set():
+                return False
+            if kodi_monitor.abortRequested():
+                return False
             try:
                 if self.isPlaying() and self.getTime() > 0:
                     return True
             except Exception:
                 pass
-            if monitor.waitForAbort(interval):
-                return False
-            elapsed += interval
+            kodi_monitor.waitForAbort(poll_interval)
 
         return False
 
@@ -54,60 +73,49 @@ class LoadingWindow(xbmcgui.WindowXMLDialog):
     PROGRESS_CONTROL = 100
 
     def __init__(self, *args, **kwargs):
-        self.progress = 0
-        self.closing = False
-        self._progress_thread = None
+        self._stop_anim      = threading.Event()
         self._controls_ready = False
+        self._anim_thread    = None
 
     def onInit(self):
+        self._controls_ready = True
+        xbmcgui.Window(10000).setProperty('loading.phase', '1')
+        xbmcgui.Window(10000).clearProperty('loading.phase2')
+        self._start_animation()
+
+    def _start_animation(self):
+        self._stop_anim.clear()
+        self._anim_thread = threading.Thread(target=self._animate, daemon=True)
+        self._anim_thread.start()
+
+    def _animate(self):
         try:
-            self._controls_ready = True
-            xbmcgui.Window(10000).setProperty('loading.phase', '1')
-            xbmcgui.Window(10000).clearProperty('loading.phase2')
-            self.start_progress_animation()
-        except Exception:
-            pass
-
-    def start_progress_animation(self):
-        if self._progress_thread is None or not self._progress_thread.is_alive():
-            self.closing = False
-            self._progress_thread = threading.Thread(target=self._animate_progress)
-            self._progress_thread.daemon = True
-            self._progress_thread.start()
-
-    def _animate_progress(self):
-        try:
-            while not self.closing:
-                for i in range(0, 101, 2):
-                    if self.closing:
-                        break
-
+            while not self._stop_anim.is_set():
+                for pct in range(0, 101, 2):
+                    if self._stop_anim.is_set():
+                        return
                     if self._controls_ready:
                         try:
-                            self.getControl(self.PROGRESS_CONTROL).setPercent(i)
+                            self.getControl(self.PROGRESS_CONTROL).setPercent(pct)
                         except Exception:
                             pass
-
-                    xbmcgui.Window(10000).setProperty('loading.progress', str(i))
+                    xbmcgui.Window(10000).setProperty('loading.progress', str(pct))
                     time.sleep(0.05)
-
-                if not self.closing:
-                    time.sleep(0.2)
+                if not self._stop_anim.is_set():
+                    time.sleep(0.1)
         except Exception:
             pass
 
-    def close_dialog(self):
+    def dismiss(self):
+        self._stop_anim.set()
+        if self._anim_thread and self._anim_thread.is_alive():
+            self._anim_thread.join(timeout=0.5)
+        for prop in ('loading.phase', 'loading.phase2', 'loading.progress', 'loading.fanart'):
+            try:
+                xbmcgui.Window(10000).clearProperty(prop)
+            except Exception:
+                pass
         try:
-            self.closing = True
-
-            if self._progress_thread and self._progress_thread.is_alive():
-                self._progress_thread.join(timeout=1.0)
-
-            xbmcgui.Window(10000).clearProperty('loading.phase')
-            xbmcgui.Window(10000).clearProperty('loading.phase2')
-            xbmcgui.Window(10000).clearProperty('loading.progress')
-            xbmcgui.Window(10000).clearProperty('loading.fanart')
-
             self.close()
         except Exception:
             pass
@@ -118,7 +126,7 @@ class SourceSelectWindow(xbmcgui.WindowXMLDialog):
     LIST_CONTROL = 200
 
     def __init__(self, *args, **kwargs):
-        self.labels = kwargs.pop('labels', [])
+        self.labels         = kwargs.pop('labels', [])
         self.selected_index = -1
 
     def onInit(self):
@@ -152,139 +160,144 @@ class SourceSelectWindow(xbmcgui.WindowXMLDialog):
 class LoadingManager:
 
     def __init__(self):
-        self.window = None
-        self._lock = threading.Lock()
-        self._monitor_thread = None
-        self._should_close = False
-        self._busy_suppress_thread = None
-        self._suppress_busy = False
-        self._player_monitor = _PlaybackMonitor()
+        self._lock        = threading.Lock()
+        self._window      = None
+        self._generation  = 0
+        self._wait_thread = None
+        self._monitor     = _PlaybackMonitor()
+        self._busy_stop   = threading.Event()
 
     def _run_busy_suppressor(self):
-        while self._suppress_busy:
+        while not self._busy_stop.wait(0.1):
             try:
                 xbmc.executebuiltin('Dialog.Close(busydialog,true)')
                 xbmc.executebuiltin('Dialog.Close(busydialognocancel,true)')
             except Exception:
                 pass
-            xbmc.sleep(100)
 
     def _start_busy_suppressor(self):
-        self._suppress_busy = True
-        if self._busy_suppress_thread is None or not self._busy_suppress_thread.is_alive():
-            self._busy_suppress_thread = threading.Thread(target=self._run_busy_suppressor)
-            self._busy_suppress_thread.daemon = True
-            self._busy_suppress_thread.start()
+        self._busy_stop.clear()
+        threading.Thread(target=self._run_busy_suppressor, daemon=True).start()
 
-    def show(self, fanart_path=None):
-        with self._lock:
+    def _stop_busy_suppressor(self):
+        self._busy_stop.set()
+
+    def _addon_path(self):
+        return xbmcaddon.Addon().getAddonInfo('path')
+
+    def _default_fanart(self):
+        return os.path.join(
+            self._addon_path(), 'resources', 'skins', 'Default', 'media', 'fanart.jpg'
+        )
+
+    def _do_dismiss(self, window):
+        self._stop_busy_suppressor()
+        if window is not None:
             try:
-                if self.window:
-                    try:
-                        self.window.close_dialog()
-                    except Exception:
-                        pass
-                    self.window = None
-
-                addon = xbmcaddon.Addon()
-                addon_path = addon.getAddonInfo('path')
-
-                if fanart_path is None:
-                    fanart_path = os.path.join(addon_path, 'resources', 'skins', 'Default', 'media', 'fanart.jpg')
-
-                xbmcgui.Window(10000).setProperty('loading.fanart', fanart_path)
-
-                self._should_close = False
-                self._start_busy_suppressor()
-
-                self.window = LoadingWindow(
-                    'DialogLoadingKing.xml',
-                    addon_path,
-                    'Default',
-                    '1080i'
-                )
-                self.window.show()
-                xbmc.sleep(100)
-
+                window.dismiss()
             except Exception:
                 pass
 
+    def show(self, fanart_path=None):
+        with self._lock:
+            old_window       = self._window
+            self._window     = None
+            self._generation += 1
+            current_gen      = self._generation
+
+        if old_window is not None:
+            self._do_dismiss(old_window)
+
+        self._monitor.cancel()
+
+        old_thread = self._wait_thread
+        if old_thread is not None and old_thread.is_alive():
+            old_thread.join(timeout=1.5)
+
+        self._monitor.reset()
+
+        fanart     = fanart_path or self._default_fanart()
+        addon_path = self._addon_path()
+
+        xbmcgui.Window(10000).setProperty('loading.fanart', fanart)
+        self._start_busy_suppressor()
+
+        new_window = LoadingWindow(
+            'DialogLoadingKing.xml', addon_path, 'Default', '1080i'
+        )
+        new_window.show()
+        xbmc.sleep(80)
+
+        with self._lock:
+            if self._generation == current_gen:
+                self._window      = new_window
+                self._wait_thread = None
+
+        if self._generation != current_gen:
+            self._do_dismiss(new_window)
+
     def show_source_select(self, players, fanart_path=None):
-        """
-        Fase 2: DialogSourceSelect abre em cima do loading (que continua aberto).
-        Bloqueia até o usuário escolher.
-        Retorna o índice selecionado ou -1 se cancelado.
-        """
         try:
-            addon = xbmcaddon.Addon()
-            addon_path = addon.getAddonInfo('path')
+            addon_path = self._addon_path()
+            fanart     = fanart_path or self._default_fanart()
 
-            if fanart_path is None:
-                fanart_path = os.path.join(addon_path, 'resources', 'skins', 'Default', 'media', 'fanart.jpg')
-
-            xbmcgui.Window(10000).setProperty('mdl.loading.fanart', fanart_path)
+            xbmcgui.Window(10000).setProperty('mdl.loading.fanart', fanart)
             xbmcgui.Window(10000).setProperty('loading.phase', '2')
 
             labels = [label for label, _ in players]
-
             dialog = SourceSelectWindow(
-                'DialogSourceSelect.xml',
-                addon_path,
-                'Default',
-                '1080i',
+                'DialogSourceSelect.xml', addon_path, 'Default', '1080i',
                 labels=labels
             )
             dialog.doModal()
 
             xbmcgui.Window(10000).clearProperty('mdl.loading.fanart')
-
             return dialog.selected_index
 
         except Exception:
             return -1
 
     def set_phase3(self):
-        """Fase 3: resolvendo o link."""
         try:
             xbmcgui.Window(10000).setProperty('loading.phase', '3')
             xbmcgui.Window(10000).setProperty('loading.phase2', 'true')
         except Exception:
             pass
 
-    def set_phase2(self):
-        """Compat: equivalente a set_phase3() no fluxo com source select."""
-        self.set_phase3()
+    set_phase2 = set_phase3
 
     def close(self):
-        if self.window:
-            self._should_close = True
-            if self._monitor_thread is None or not self._monitor_thread.is_alive():
-                self._player_monitor.reset()
-                self._monitor_thread = threading.Thread(target=self._wait_for_playback)
-                self._monitor_thread.daemon = True
-                self._monitor_thread.start()
-
-    def _wait_for_playback(self):
-        self._player_monitor.wait_for_playback(timeout=20)
         with self._lock:
-            if self.window and self._should_close:
-                try:
-                    self._suppress_busy = False
-                    self.window.close_dialog()
-                    self.window = None
-                except Exception:
-                    pass
+            window = self._window
+            gen    = self._generation
+
+        if window is None:
+            return
+
+        def _wait_and_close():
+            self._monitor.wait_until_playing(max_wait=45.0)
+            with self._lock:
+                if self._window is window and self._generation == gen:
+                    self._window = None
+                    do_dismiss = True
+                else:
+                    do_dismiss = False
+            if do_dismiss:
+                self._do_dismiss(window)
+
+        t = threading.Thread(target=_wait_and_close, daemon=True)
+        with self._lock:
+            self._wait_thread = t
+        t.start()
 
     def force_close(self):
         with self._lock:
-            self._suppress_busy = False
-            self._should_close = False
-            if self.window:
-                try:
-                    self.window.close_dialog()
-                    self.window = None
-                except Exception:
-                    pass
+            window           = self._window
+            self._window     = None
+            self._generation += 1
+
+        self._monitor.cancel()
+        self._do_dismiss(window)
 
 
 loading_manager = LoadingManager()

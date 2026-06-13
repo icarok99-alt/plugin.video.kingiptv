@@ -6,7 +6,31 @@ import json
 import threading
 from lib.helper import *
 import inputstreamhelper
-from lib import xtream, tunein, pluto, imdb, api_vod, hlsretry
+from lib import xtream, tunein, pluto, imdb, api_vod
+from lib.proxy import UnifiedServer as _UnifiedServer, PROXY_PORT as _PROXY_PORT
+import threading as _threading
+
+# Proxy singleton — iniciado uma vez por processo, mantido vivo como daemon thread
+_proxy_server   = None
+_proxy_lock     = _threading.Lock()
+
+def _start_proxy_if_needed():
+    """Inicia o proxy local se ainda não estiver rodando. Thread-safe."""
+    global _proxy_server
+    if _proxy_server is not None:
+        return _PROXY_PORT
+    with _proxy_lock:
+        if _proxy_server is not None:
+            return _PROXY_PORT
+        try:
+            server = _UnifiedServer(port=_PROXY_PORT)
+            t = _threading.Thread(target=server.start)
+            t.daemon = True
+            t.start()
+            _proxy_server = server
+        except Exception:
+            pass
+    return _PROXY_PORT
 from lib.resolver import Resolver
 
 try:
@@ -246,11 +270,7 @@ def play_iptv(param):
     description = param.get('description', '')
     iconimage = param.get('iconimage', '')
     url = param.get('url', '')
-    try:
-        hlsretry.XtreamProxy().start()
-    except:
-        pass
-    proxy_url = f'http://127.0.0.1:{hlsretry.PORT_NUMBER}/?url={quote_plus(url)}'
+    proxy_url = 'http://127.0.0.1:{}/?url={}'.format(_start_proxy_if_needed(), quote_plus(url))
     play_item = xbmcgui.ListItem(path=proxy_url)
     play_item.setContentLookup(False)
     play_item.setArt({"icon": iconimage or "DefaultVideo.png", "thumb": iconimage or "DefaultVideo.png"})
