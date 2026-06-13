@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 
 import os
 import time
@@ -7,30 +6,27 @@ import threading
 from lib.helper import *
 import inputstreamhelper
 from lib import xtream, tunein, pluto, imdb, api_vod
-from lib.proxy import UnifiedServer as _UnifiedServer, PROXY_PORT as _PROXY_PORT
-import threading as _threading
+from lib.proxy import UnifiedServer, PROXY_PORT
 
-# Proxy singleton — iniciado uma vez por processo, mantido vivo como daemon thread
 _proxy_server   = None
-_proxy_lock     = _threading.Lock()
+_proxy_lock     = threading.Lock()
 
 def _start_proxy_if_needed():
-    """Inicia o proxy local se ainda não estiver rodando. Thread-safe."""
     global _proxy_server
     if _proxy_server is not None:
-        return _PROXY_PORT
+        return PROXY_PORT
     with _proxy_lock:
         if _proxy_server is not None:
-            return _PROXY_PORT
+            return PROXY_PORT
         try:
-            server = _UnifiedServer(port=_PROXY_PORT)
-            t = _threading.Thread(target=server.start)
+            server = UnifiedServer(port=PROXY_PORT)
+            t = threading.Thread(target=server.start)
             t.daemon = True
             t.start()
             _proxy_server = server
         except Exception:
             pass
-    return _PROXY_PORT
+    return PROXY_PORT
 from lib.resolver import Resolver
 
 try:
@@ -629,7 +625,6 @@ def _sort_players_by_priority(players):
 
     xbmc.log('[KingIPTV] Todos os sources falharam.', xbmc.LOGERROR)
     return None, None
-
 
 @route('/play_resolve_movies')
 def play_resolve_movies(param):
