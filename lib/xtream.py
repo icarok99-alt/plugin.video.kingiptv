@@ -1,3 +1,5 @@
+# -*- coding: utf-8 -*-
+
 import xml.etree.ElementTree as ET
 import base64
 import hashlib
@@ -18,15 +20,16 @@ from urllib.parse import urlparse, parse_qs
 IPTV_PROBLEM_LOG = translate(os.path.join(profile, 'iptv_problems_log.txt'))
 
 REQUEST_TIMEOUT = 10
-MAX_RETRIES     = 1
+MAX_RETRIES = 1
 CACHE_FAILED_URLS = {}
 
 EPG_XML_TTL = 86400
+EPG_XML_INDEX_VERSION = 'kingIPTV_epg'
 
-_EPG_INDEX_MEMORY  = {}
-_EPG_INDEX_LOCK    = threading.Lock()
-_EPG_ACTIVE        = set()
-_EPG_ACTIVE_LOCK   = threading.Lock()
+_EPG_INDEX_MEMORY = {}
+_EPG_INDEX_LOCK = threading.Lock()
+_EPG_ACTIVE = set()
+_EPG_ACTIVE_LOCK = threading.Lock()
 
 BROWSER_UA = (
     'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
@@ -34,15 +37,15 @@ BROWSER_UA = (
     'Chrome/130.0.0.0 Safari/537.36'
 )
 
-XC_EPG_COLOR       = 'gold'
-EPG_HEADER_COLOR   = 'gold'
-EPG_CURRENT_COLOR  = 'gold'
+KINGIPTV_EPG_COLOR = 'gold'
+EPG_HEADER_COLOR = 'gold'
+EPG_CURRENT_COLOR = 'gold'
 EPG_SCHEDULE_COLOR = 'gray'
 
 def color(text, color_name=None):
     if not text:
         return ''
-    color_name = color_name or XC_EPG_COLOR
+    color_name = color_name or KINGIPTV_EPG_COLOR
     return '[COLOR {0}]{1}[/COLOR]'.format(color_name, text)
 
 def create_session():
@@ -117,7 +120,6 @@ def clean_channel_name(name):
     name = re.sub(r'\s*\[\d{1,2}:\d{2}\s*-\s*\d{1,2}:\d{2}\]', '', name)
     name = re.sub(r'\s*\+\s*\d+\.?\d*\s*min', '', name)
     name = re.sub(r'\s+', ' ', name).strip()
-
     tags_inicio = []
     resto = name
     while True:
@@ -127,10 +129,8 @@ def clean_channel_name(name):
             resto = resto[match.end():]
         else:
             break
-
     if not resto:
         return name
-
     sufixos_canal = [
         'HD', 'FHD', 'SD', '4K', 'UHD', 'HD+', 'HD¹', 'HD²', 'HD2', 'HD1',
         'FHD¹', 'FHD²', 'SD¹', 'SD²', '4K¹', '4K²', 'UHD¹', 'UHD²',
@@ -144,11 +144,9 @@ def clean_channel_name(name):
         palavra_limpa = re.sub(r'[¹²+]', '', palavra.upper())
         if palavra.upper() in sufixos_canal or palavra_limpa in sufixos_canal:
             ultimo_sufixo_idx = idx
-
     if ultimo_sufixo_idx >= 0:
         canal_str = ' '.join(palavras[:ultimo_sufixo_idx + 1])
         name = (' '.join(tags_inicio) + ' ' + canal_str).strip() if tags_inicio else canal_str
-
     if '-' in name:
         name = re.sub(r'\s*-\s*', ' - ', name)
     return re.sub(r'\s+', ' ', name).strip()
@@ -172,24 +170,45 @@ def parse_xmltv_time(value):
     value = str(value or '').strip()
     if not value:
         return 0
-    try:
-        main = value.split(' ', 1)[0].strip()
-        tz   = value.split(' ', 1)[1].strip() if ' ' in value else ''
-        if len(main) >= 14 and main[:14].isdigit():
-            dt = datetime.datetime.strptime(main[:14], '%Y%m%d%H%M%S')
-            if tz and len(tz) >= 5 and tz[0] in '+-' and tz[1:5].isdigit():
-                sign   = 1 if tz[0] == '+' else -1
-                offset = sign * (int(tz[1:3]) * 3600 + int(tz[3:5]) * 60)
-                return int(dt.replace(
-                    tzinfo=datetime.timezone(datetime.timedelta(seconds=offset))
-                ).timestamp())
-            return int(time.mktime(dt.timetuple()))
-        if 'T' in value:
-            return int(datetime.datetime.fromisoformat(
-                value.replace('Z', '+00:00')
-            ).timestamp())
-    except Exception:
-        return 0
+
+    if value.isdigit():
+        return int(value)
+
+    parts = value.split()
+    dt_part = parts[0]
+    tz_part = parts[1] if len(parts) > 1 else ''
+
+    if 'T' in dt_part:
+        try:
+            clean = value.replace('Z', '+00:00')
+            dt = datetime.datetime.fromisoformat(clean)
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=datetime.timezone.utc)
+            return int(dt.timestamp())
+        except:
+            pass
+
+    if len(dt_part) >= 14 and dt_part[:14].isdigit():
+        year = int(dt_part[:4])
+        month = int(dt_part[4:6])
+        day = int(dt_part[6:8])
+        hour = int(dt_part[8:10])
+        minute = int(dt_part[10:12])
+        second = int(dt_part[12:14])
+        dt = datetime.datetime(year, month, day, hour, minute, second)
+
+        if tz_part and len(tz_part) >= 5 and tz_part[0] in '+-':
+            sign = 1 if tz_part[0] == '+' else -1
+            tz_hour = int(tz_part[1:3])
+            tz_min = int(tz_part[3:5])
+            offset = sign * (tz_hour * 3600 + tz_min * 60)
+            tz = datetime.timezone(datetime.timedelta(seconds=offset))
+            dt = dt.replace(tzinfo=tz)
+        else:
+            dt = dt.replace(tzinfo=datetime.timezone.utc)
+
+        return int(dt.timestamp())
+
     return 0
 
 def normalize_epoch_seconds(value):
@@ -203,24 +222,23 @@ def normalize_epoch_seconds(value):
             return 0
         if raw.isdigit():
             return int(raw)
-        cleaned = raw.replace('Z', '+00:00')
-        try:
-            return int(datetime.datetime.fromisoformat(cleaned).timestamp())
-        except Exception:
-            pass
-        for fmt in ('%Y-%m-%d %H:%M:%S', '%Y-%m-%d %H:%M', '%Y%m%d%H%M%S'):
-            try:
-                return int(datetime.datetime.strptime(raw[:len(fmt)], fmt).timestamp())
-            except Exception:
-                continue
-        compact = raw.split()[0]
-        if compact.isdigit() and len(compact) >= 14:
-            return int(datetime.datetime.strptime(compact[:14], '%Y%m%d%H%M%S').timestamp())
+        return parse_xmltv_time(raw)
     except Exception:
         return 0
-    return 0
 
-def _xml_child_text(element, child_name):
+def get_local_tag(elem):
+    if elem is None:
+        return ''
+    tag = elem.tag
+    if tag is None:
+        return ''
+    if '}' in tag:
+        return tag.split('}', 1)[1]
+    if ':' in tag:
+        return tag.split(':', 1)[1]
+    return tag
+
+def xml_child_text(element, child_name):
     try:
         child = element.find(child_name)
         if child is not None and child.text:
@@ -229,8 +247,7 @@ def _xml_child_text(element, child_name):
         pass
     try:
         for child in list(element):
-            tag = str(child.tag or '').split('}', 1)[-1]
-            if tag == child_name and child.text:
+            if get_local_tag(child) == child_name and child.text:
                 return child.text.strip()
     except Exception:
         pass
@@ -254,7 +271,7 @@ def normalize_epg_program(program):
     if not isinstance(program, dict):
         return None
     title = extract_program_title(program)
-    desc  = extract_program_desc(program)
+    desc = extract_program_desc(program)
     start = normalize_epoch_seconds(
         program.get('start_timestamp') or program.get('start') or
         program.get('start_time') or program.get('start_date')
@@ -280,7 +297,7 @@ def epg_format_range(program):
     if not program:
         return ''
     start = int(program.get('start') or 0)
-    end   = int(program.get('end') or 0)
+    end = int(program.get('end') or 0)
     if start <= 0:
         return ''
     if end <= start:
@@ -293,10 +310,10 @@ def epg_format_range(program):
 def epg_lookup_current_next(programs):
     now = int(time.time())
     current = None
-    nextp   = None
+    nextp = None
     for idx, program in enumerate(programs or []):
         start = int(program.get('start') or 0)
-        end   = int(program.get('end') or 0)
+        end = int(program.get('end') or 0)
         if start and end and start <= now < end:
             current = program
             if idx + 1 < len(programs):
@@ -324,14 +341,14 @@ def build_epg_desc(current=None, nextp=None, day_schedule=None):
     now_ts = int(time.time())
     if current:
         title = str(current.get('title') or '').strip()
-        rng   = epg_format_range(current)
-        line  = 'Agora: {} | {}'.format(rng, title) if rng else 'Agora: {}'.format(title)
+        rng = epg_format_range(current)
+        line = 'Agora: {} | {}'.format(rng, title) if rng else 'Agora: {}'.format(title)
         if line:
             parts.append(color(line, 'gold'))
     if nextp:
         title = str(nextp.get('title') or '').strip()
-        rng   = epg_format_range(nextp)
-        line  = 'Próximo: {} | {}'.format(rng, title) if rng else 'Próximo: {}'.format(title)
+        rng = epg_format_range(nextp)
+        line = 'Próximo: {} | {}'.format(rng, title) if rng else 'Próximo: {}'.format(title)
         if title:
             if parts:
                 parts.append('')
@@ -347,8 +364,8 @@ def build_epg_desc(current=None, nextp=None, day_schedule=None):
         parts.append(color('Programação do dia', 'gold'))
         for p in upcoming:
             title = str(p.get('title') or '').strip()
-            rng   = epg_format_range(p)
-            line  = '{} | {}'.format(rng, title) if rng else title
+            rng = epg_format_range(p)
+            line = '{} | {}'.format(rng, title) if rng else title
             if line:
                 parts.append(color(line, 'gold'))
     return '\n'.join(parts).strip()
@@ -382,10 +399,13 @@ def _safe_write_json(path, data):
         pass
     return False
 
-def _epg_xml_fresh(dns):
+def _epg_fingerprint(dns, username, password):
+    return '{}|{}|{}'.format(dns, username, password)
+
+def _epg_xml_fresh(dns, username, password):
     paths = _epg_paths(dns)
-    meta  = _safe_read_json(paths['meta'])
-    if meta.get('dns') != dns:
+    meta = _safe_read_json(paths['meta'])
+    if meta.get('fingerprint') != _epg_fingerprint(dns, username, password):
         return False
     fetched_at = int(meta.get('fetched_at') or 0)
     if not fetched_at or (time.time() - fetched_at) >= EPG_XML_TTL:
@@ -395,10 +415,12 @@ def _epg_xml_fresh(dns):
     except Exception:
         return False
 
-def _epg_index_fresh(dns):
+def _epg_index_fresh(dns, username, password):
     paths = _epg_paths(dns)
     index = _safe_read_json(paths['index'])
-    if index.get('dns') != dns:
+    if index.get('version') != EPG_XML_INDEX_VERSION:
+        return False
+    if index.get('fingerprint') != _epg_fingerprint(dns, username, password):
         return False
     generated_at = int(index.get('generated_at') or 0)
     if not generated_at or (time.time() - generated_at) >= EPG_XML_TTL:
@@ -406,7 +428,7 @@ def _epg_index_fresh(dns):
     channels = index.get('channels')
     if not isinstance(channels, dict) or not channels:
         return False
-    now_ts     = int(time.time())
+    now_ts = int(time.time())
     window_end = int(index.get('window_end') or 0)
     if window_end and now_ts > window_end:
         return False
@@ -414,7 +436,7 @@ def _epg_index_fresh(dns):
 
 def _download_epg_xml(dns, username, password):
     paths = _epg_paths(dns)
-    urls  = [
+    urls = [
         '{}/xmltv.php?username={}&password={}'.format(dns, username, password),
         '{}/epg.php?username={}&password={}'.format(dns, username, password),
         '{}/api.php?username={}&password={}&type=m3u_plus&output=ts'.format(dns, username, password),
@@ -427,37 +449,15 @@ def _download_epg_xml(dns, username, password):
     }
     for url in urls:
         try:
-            response = requests.get(
-                url, timeout=60, headers=headers,
-                allow_redirects=True, verify=False,
-                stream=True,
-            )
+            response = requests.get(url, timeout=60, headers=headers, allow_redirects=True, verify=False, stream=True)
             if response.status_code != 200:
                 continue
-
-            chunks = []
-            sample_checked = False
-            total = 0
-            for chunk in response.iter_content(chunk_size=65536):
-                if not chunk:
-                    continue
-                chunks.append(chunk)
-                total += len(chunk)
-                if not sample_checked and total >= 512:
-                    sample = b''.join(chunks)[:512].lower()
-                    if b'<tv' not in sample and b'<xmltv' not in sample and b'<epg' not in sample:
-                        break
-                    sample_checked = True
-
-            content = b''.join(chunks)
+            content = response.content
             if len(content) < 256:
                 continue
-
-            if not sample_checked:
-                sample = content[:512].lower()
-                if b'<tv' not in sample and b'<xmltv' not in sample and b'<epg' not in sample:
-                    continue
-
+            sample = content[:512].lower()
+            if b'<tv' not in sample and b'<xmltv' not in sample and b'<epg' not in sample:
+                continue
             tmp = paths['xml'] + '.tmp'
             with open(tmp, 'wb') as f:
                 f.write(content)
@@ -468,9 +468,9 @@ def _download_epg_xml(dns, username, password):
                 pass
             os.rename(tmp, paths['xml'])
             _safe_write_json(paths['meta'], {
-                'dns':        dns,
+                'fingerprint': _epg_fingerprint(dns, username, password),
                 'fetched_at': int(time.time()),
-                'size':       len(content),
+                'size': len(content),
             })
             try:
                 if os.path.exists(paths['index']):
@@ -484,23 +484,30 @@ def _download_epg_xml(dns, username, password):
             continue
     return False
 
-def _build_epg_index(dns):
+def _build_epg_index(dns, username, password):
     paths = _epg_paths(dns)
     if not os.path.exists(paths['xml']):
+        log_iptv_problem(dns, 'Arquivo XML não encontrado')
         return False
 
-    now_ts    = int(time.time())
+    now_ts = int(time.time())
     start_day = datetime.datetime.fromtimestamp(now_ts).replace(
         hour=0, minute=0, second=0, microsecond=0
     )
-    window_start = int(start_day.timestamp()) - 3600
-    window_end   = int((start_day + datetime.timedelta(days=2)).timestamp()) + 3600
+    window_start = int(start_day.timestamp()) - 86400
+    window_end = int((start_day + datetime.timedelta(days=2)).timestamp()) + 86400
+    log_iptv_problem(dns, f'Janela: {window_start} a {window_end} (now={now_ts})')
 
     channels = {}
-    total    = 0
+    total_programmes = 0
+    total_with_cid = 0
+    total_in_window = 0
+    total_saved = 0
+    logged_first = False
+
     try:
         for event, elem in ET.iterparse(paths['xml'], events=('end',)):
-            tag = str(elem.tag or '').split('}', 1)[-1]
+            tag = get_local_tag(elem)
             if tag != 'programme':
                 if tag not in ('title', 'desc'):
                     try:
@@ -509,46 +516,104 @@ def _build_epg_index(dns):
                         pass
                 continue
 
-            cid   = normalize_epg_channel_id(elem.get('channel'))
-            start = parse_xmltv_time(elem.get('start'))
-            end   = parse_xmltv_time(elem.get('stop') or elem.get('end'))
-            if end <= start:
+            total_programmes += 1
+
+            cid = normalize_epg_channel_id(elem.get('channel'))
+            if not cid:
+                try:
+                    elem.clear()
+                except Exception:
+                    pass
+                continue
+            total_with_cid += 1
+
+            start = 0
+            end = 0
+            ts_start = elem.get('start_timestamp')
+            if ts_start and ts_start.isdigit():
+                start = int(ts_start)
+            else:
+                start_str = elem.get('start')
+                if start_str:
+                    start = parse_xmltv_time(start_str)
+
+            ts_end = elem.get('stop_timestamp')
+            if ts_end and ts_end.isdigit():
+                end = int(ts_end)
+            else:
+                end_str = elem.get('stop') or elem.get('end')
+                if end_str:
+                    end = parse_xmltv_time(end_str)
+
+            if end <= start and start > 0:
                 end = start + 3600
 
-            if cid and start > 0 and not (end < window_start or start > window_end):
-                title = _xml_child_text(elem, 'title')
-                desc  = _xml_child_text(elem, 'desc')
-                if title:
-                    channels.setdefault(cid, []).append({
-                        'start': start,
-                        'end':   end,
-                        'title': title,
-                        'desc':  desc,
-                    })
-                    total += 1
+            if not logged_first and total_programmes <= 10:
+                log_iptv_problem(dns, f'Programa #{total_programmes}: cid={cid}, ts_start={ts_start}, start={start}, ts_end={ts_end}, end={end}')
+                if total_programmes == 10:
+                    logged_first = True
+                    log_iptv_problem(dns, '--- Fim dos primeiros 10 programas (logs) ---')
+
+            if start <= 0:
+                try:
+                    elem.clear()
+                except Exception:
+                    pass
+                continue
+
+            if end < window_start or start > window_end:
+                try:
+                    elem.clear()
+                except Exception:
+                    pass
+                continue
+            total_in_window += 1
+
+            title = xml_child_text(elem, 'title')
+            if not title:
+                try:
+                    elem.clear()
+                except Exception:
+                    pass
+                continue
+
+            desc = xml_child_text(elem, 'desc')
+            channels.setdefault(cid, []).append({
+                'start': start,
+                'end': end,
+                'title': title,
+                'desc': desc,
+            })
+            total_saved += 1
+
             try:
                 elem.clear()
             except Exception:
                 pass
 
+        log_iptv_problem(dns, f'Resumo: programmes={total_programmes}, com_cid={total_with_cid}, na_janela={total_in_window}, salvos={total_saved}')
+
         for cid in channels:
             channels[cid].sort(key=lambda x: x.get('start') or 0)
 
         _safe_write_json(paths['index'], {
-            'dns':          dns,
+            'version': EPG_XML_INDEX_VERSION,
+            'fingerprint': _epg_fingerprint(dns, username, password),
             'generated_at': int(time.time()),
             'window_start': window_start,
-            'window_end':   window_end,
-            'channels':     channels,
+            'window_end': window_end,
+            'channels': channels,
         })
+        log_iptv_problem(dns, f'Indexação concluída: {len(channels)} canais, {total_saved} programas')
         with _EPG_INDEX_LOCK:
             _EPG_INDEX_MEMORY.pop(dns, None)
         return True
-    except Exception:
+    except Exception as e:
+        log_iptv_problem(dns, f'Erro na indexação: {e}')
         return False
 
 def _ensure_epg_background(dns, username, password):
-    if _epg_index_fresh(dns):
+    if _epg_index_fresh(dns, username, password):
         return
 
     with _EPG_ACTIVE_LOCK:
@@ -558,17 +623,17 @@ def _ensure_epg_background(dns, username, password):
 
     def _worker():
         try:
-            xml_fresh   = _epg_xml_fresh(dns)
-            index_fresh = _epg_index_fresh(dns)
+            xml_fresh = _epg_xml_fresh(dns, username, password)
+            index_fresh = _epg_index_fresh(dns, username, password)
 
             if not index_fresh:
                 if not xml_fresh:
                     if _download_epg_xml(dns, username, password):
-                        _build_epg_index(dns)
+                        _build_epg_index(dns, username, password)
                 else:
-                    _build_epg_index(dns)
-        except Exception:
-            pass
+                    _build_epg_index(dns, username, password)
+        except Exception as e:
+            log_iptv_problem(dns, f'Worker EPG erro: {e}')
         finally:
             with _EPG_ACTIVE_LOCK:
                 _EPG_ACTIVE.discard(dns)
@@ -576,7 +641,6 @@ def _ensure_epg_background(dns, username, password):
     t = threading.Thread(target=_worker)
     t.daemon = True
     t.start()
-
 
 def load_epg_index(dns):
     with _EPG_INDEX_LOCK:
@@ -586,7 +650,7 @@ def load_epg_index(dns):
 
     paths = _epg_paths(dns)
     index = _safe_read_json(paths['index'])
-    if isinstance(index.get('channels'), dict) and index.get('dns') == dns:
+    if isinstance(index.get('channels'), dict) and index.get('version') == EPG_XML_INDEX_VERSION:
         with _EPG_INDEX_LOCK:
             _EPG_INDEX_MEMORY[dns] = (index, time.time())
         return index
@@ -596,7 +660,7 @@ def get_epg_programs(channel_id, dns, limit=12):
     index = load_epg_index(dns)
     if not index:
         return []
-    cid      = normalize_epg_channel_id(channel_id)
+    cid = normalize_epg_channel_id(channel_id)
     channels = index.get('channels') if isinstance(index.get('channels'), dict) else {}
     programs = channels.get(cid) or []
     if not programs:
@@ -615,12 +679,12 @@ def get_epg_programs(channel_id, dns, limit=12):
 
 def extract_info(url):
     try:
-        parsed   = urlparse(url)
-        host     = parsed.hostname
+        parsed = urlparse(url)
+        host = parsed.hostname
         if not host:
             return None, None, None
-        port     = parsed.port or (80 if parsed.scheme == 'http' else 443)
-        params   = parse_qs(parsed.query)
+        port = parsed.port or (80 if parsed.scheme == 'http' else 443)
+        params = parse_qs(parsed.query)
         username = params.get('username', [None])[0]
         password = params.get('password', [None])[0]
         if not username or not password:
@@ -651,7 +715,7 @@ def check_iptv(url_iptv):
     return cond
 
 def parselist(url):
-    iptv    = []
+    iptv = []
     session = create_session()
     try:
         response = session.get(url, timeout=REQUEST_TIMEOUT)
@@ -661,9 +725,9 @@ def parselist(url):
     try:
         if 'paste.kodi.tv' in url and 'documents' not in url and 'raw' not in url:
             try:
-                key  = url.split('/')[-1]
-                url  = 'https://paste.kodi.tv/documents/' + key
-                src  = session.get(url, timeout=REQUEST_TIMEOUT).json()['data']
+                key = url.split('/')[-1]
+                url = 'https://paste.kodi.tv/documents/' + key
+                src = session.get(url, timeout=REQUEST_TIMEOUT).json()['data']
                 for i in src.split('\n'):
                     i = i.replace(' ', '')
                     if 'http' in i and check_iptv(i):
@@ -689,25 +753,25 @@ class API:
         if not username or not password:
             raise ValueError('Username e password são obrigatórios')
 
-        self.dns      = dns
+        self.dns = dns
         self.username = username
         self.password = password
 
-        self.player_api  = '{}/player_api.php?username={}&password={}'.format(dns, username, password)
-        self.play_url    = '{}/live/{}/{}/'.format(dns, username, password)
+        self.player_api = '{}/player_api.php?username={}&password={}'.format(dns, username, password)
+        self.play_url = '{}/live/{}/{}/'.format(dns, username, password)
         self.play_movies = '{}/movie/{}/{}/'.format(dns, username, password)
         self.play_series = '{}/series/{}/{}/'.format(dns, username, password)
 
-        self.live_url   = '{}/enigma2.php?username={}&password={}&type=get_live_categories'.format(dns, username, password)
-        self.vod_url    = '{}/enigma2.php?username={}&password={}&type=get_vod_categories'.format(dns, username, password)
+        self.live_url = '{}/enigma2.php?username={}&password={}&type=get_live_categories'.format(dns, username, password)
+        self.vod_url = '{}/enigma2.php?username={}&password={}&type=get_vod_categories'.format(dns, username, password)
         self.series_url = '{}/enigma2.php?username={}&password={}&type=get_series_categories'.format(dns, username, password)
 
-        self.adult_tags  = ['xxx', 'xXx', 'XXX', 'adult', 'Adult', 'ADULT',
-                            'porn', 'Porn', 'PORN', 'teste', 'TESTE', 'Teste']
-        self.hide_adult  = hide_adult
-        self.server_alive  = None
+        self.adult_tags = ['xxx', 'xXx', 'XXX', 'adult', 'Adult', 'ADULT',
+                           'porn', 'Porn', 'PORN', 'teste', 'TESTE', 'Teste']
+        self.hide_adult = hide_adult
+        self.server_alive = None
         self.server_format = None
-        self.session       = create_session()
+        self.session = create_session()
 
     def b64(self, obj):
         return decode_b64_safe(obj)
@@ -748,7 +812,7 @@ class API:
         try:
             r = self.session.get(self.player_api, timeout=10, allow_redirects=False)
             if r.status_code == 200:
-                self.server_alive  = True
+                self.server_alive = True
                 self.server_format = 'xtream'
                 try:
                     r2 = requests.get(self.live_url, timeout=3,
@@ -764,12 +828,12 @@ class API:
         try:
             r = self.session.get(self.live_url, timeout=10, allow_redirects=False)
             if r.status_code == 200:
-                self.server_alive  = True
+                self.server_alive = True
                 self.server_format = 'enigma2'
                 return True
         except Exception:
             pass
-        self.server_alive  = False
+        self.server_alive = False
         self.server_format = None
         log_iptv_problem(self.dns, 'Servidor não responde')
         CACHE_FAILED_URLS[self.dns] = time.time()
@@ -829,12 +893,12 @@ class API:
             if not xml_data:
                 return itens
             try:
-                root     = ET.fromstring(xml_data)
+                root = ET.fromstring(xml_data)
                 channels = root.findall('channel')
                 for channel in channels:
                     try:
                         name_elem = channel.find('title')
-                        url_elem  = channel.find('playlist_url')
+                        url_elem = channel.find('playlist_url')
                         if name_elem is None or url_elem is None:
                             continue
                         name = clean_category_name(self.b64(name_elem.text))
@@ -850,14 +914,14 @@ class API:
                 log_iptv_problem(self.live_url, 'Erro ao parsear categorias XML: {}'.format(e))
 
         elif self.server_format == 'xtream':
-            url_cat    = '{}&action=get_live_categories'.format(self.player_api)
+            url_cat = '{}&action=get_live_categories'.format(self.player_api)
             categories = self.http(url_cat, 'json_url')
             if not categories:
                 return itens
             try:
                 for cat in categories:
                     try:
-                        name   = clean_category_name(cat.get('category_name', ''))
+                        name = clean_category_name(cat.get('category_name', ''))
                         cat_id = cat.get('category_id', '')
                         if not cat_id or not name or 'All' in name or not self._allow(name):
                             continue
@@ -884,13 +948,13 @@ class API:
             try:
                 for stream in json_data:
                     try:
-                        name      = clean_channel_name(stream.get('name', '') or '')
+                        name = clean_channel_name(stream.get('name', '') or '')
                         stream_id = stream.get('stream_id')
                         if not stream_id:
                             continue
 
-                        url_     = '{}{}.m3u8'.format(self.play_url, stream_id)
-                        thumb    = clean_text(stream.get('stream_icon', ''))
+                        url_ = '{}{}.m3u8'.format(self.play_url, stream_id)
+                        thumb = clean_text(stream.get('stream_icon', ''))
 
                         epg_title_raw = stream.get('epg_title') or ''
                         if epg_title_raw:
@@ -944,10 +1008,10 @@ class API:
             return itens
 
         try:
-            url_json   = '{}&action=get_live_streams&category_id={}'.format(self.player_api, chan_id)
-            json_data  = self.http(url_json, 'json_url')
-            root       = ET.fromstring(xml_data)
-            channels   = root.findall('channel')
+            url_json = '{}&action=get_live_streams&category_id={}'.format(self.player_api, chan_id)
+            json_data = self.http(url_json, 'json_url')
+            root = ET.fromstring(xml_data)
+            channels = root.findall('channel')
             if not channels:
                 return itens
 
@@ -956,22 +1020,22 @@ class API:
                     title_elem = channel.find('title')
                     if title_elem is None:
                         continue
-                    name      = clean_channel_name(self.b64(title_elem.text))
+                    name = clean_channel_name(self.b64(title_elem.text))
                     stream_id = self.channel_id(json_data, i)
                     if not stream_id:
                         continue
-                    url_  = '{}{}.m3u8'.format(self.play_url, stream_id)
+                    url_ = '{}{}.m3u8'.format(self.play_url, stream_id)
                     try:
-                        di    = channel.find('desc_image')
+                        di = channel.find('desc_image')
                         thumb = di.text.replace('<![CDATA[ ', '').replace(' ]]>', '') if di is not None else ''
                     except Exception:
                         thumb = ''
 
-                    display_name   = name
-                    desc           = ''
+                    display_name = name
+                    desc = ''
                     if json_data and i < len(json_data):
-                        stream         = json_data[i]
-                        epg_title_raw  = stream.get('epg_title') or ''
+                        stream = json_data[i]
+                        epg_title_raw = stream.get('epg_title') or ''
                         if epg_title_raw:
                             epg_title_clean = decode_b64_safe(epg_title_raw).strip()
                             if epg_title_clean:
@@ -1005,9 +1069,9 @@ class API:
         return itens
 
     def series_cat(self):
-        itens    = []
-        url_ser  = '{}&action=get_series_categories'.format(self.player_api)
-        vod_cat  = self.http(url_ser, 'json_url')
+        itens = []
+        url_ser = '{}&action=get_series_categories'.format(self.player_api)
+        vod_cat = self.http(url_ser, 'json_url')
         if not vod_cat:
             return itens
         for cat in vod_cat:
@@ -1024,31 +1088,31 @@ class API:
         return itens
 
     def series_list(self, url):
-        itens   = []
+        itens = []
         ser_cat = self.http(url, 'json_url')
         if not ser_cat:
             return itens
         for ser in ser_cat:
             try:
-                name      = first_clean_text(ser, 'name', 'title')
+                name = first_clean_text(ser, 'name', 'title')
                 series_id = ser.get('series_id', '')
                 if not series_id or not name:
                     continue
                 url_ = '{}&action=get_series_info&series_id={}'.format(
                     self.player_api, str(series_id)
                 )
-                thumb      = clean_text(ser.get('cover', ''))
+                thumb = clean_text(ser.get('cover', ''))
                 background = clean_text(
                     ser.get('backdrop_path', [''])[0]
                     if isinstance(ser.get('backdrop_path'), list)
                     else ''
                 )
-                plot              = clean_text(first_clean_text(ser, 'plot', 'description', 'overview'))
-                releaseDate       = clean_text(first_clean_text(ser, 'releaseDate', 'release_date', 'premiered'))
-                cast              = str(clean_text(ser.get('cast', ''))).split()
-                rating_5based     = clean_text(str(ser.get('rating_5based', '') or ser.get('rating', '')))
-                episode_run_time  = clean_text(str(ser.get('episode_run_time', '')))
-                genre             = clean_text(first_clean_text(ser, 'genre', 'genres'))
+                plot = clean_text(first_clean_text(ser, 'plot', 'description', 'overview'))
+                releaseDate = clean_text(first_clean_text(ser, 'releaseDate', 'release_date', 'premiered'))
+                cast = str(clean_text(ser.get('cast', ''))).split()
+                rating_5based = clean_text(str(ser.get('rating_5based', '') or ser.get('rating', '')))
+                episode_run_time = clean_text(str(ser.get('episode_run_time', '')))
+                genre = clean_text(first_clean_text(ser, 'genre', 'genres'))
                 itens.append((name, url_, thumb, background, plot,
                               releaseDate, cast, rating_5based, episode_run_time, genre))
             except Exception:
@@ -1056,13 +1120,13 @@ class API:
         return itens
 
     def series_seasons(self, url):
-        itens   = []
+        itens = []
         ser_cat = self.http(url, 'json_url')
         if not ser_cat or 'episodes' not in ser_cat:
             return itens
         try:
-            info       = ser_cat.get('info', {})
-            thumb      = clean_text(info.get('cover', ''))
+            info = ser_cat.get('info', {})
+            thumb = clean_text(info.get('cover', ''))
             background = clean_text(
                 info.get('backdrop_path', [''])[0]
                 if isinstance(info.get('backdrop_path'), list)
@@ -1070,8 +1134,8 @@ class API:
             )
             for ser in ser_cat['episodes']:
                 try:
-                    name  = 'Season - ' + str(ser)
-                    url_  = '{}&season_number={}'.format(url, str(ser))
+                    name = 'Season - ' + str(ser)
+                    url_ = '{}&season_number={}'.format(url, str(ser))
                     itens.append((name, url_, thumb, background))
                 except Exception:
                     continue
@@ -1080,34 +1144,34 @@ class API:
         return itens
 
     def season_list(self, url):
-        itens   = []
+        itens = []
         ser_cat = self.http(url, 'json_url')
         if not ser_cat or 'episodes' not in ser_cat:
             return itens
         try:
-            info     = ser_cat.get('info', {})
+            info = ser_cat.get('info', {})
             episodes = ser_cat['episodes']
-            parsed   = urlparse(url)
+            parsed = urlparse(url)
             season_number = str(parse_qs(parsed.query)['season_number'][0])
             if season_number not in episodes:
                 return itens
             for ser in episodes[season_number]:
                 try:
                     episode_id = ser.get('id', '')
-                    extension  = clean_text(ser.get('container_extension', 'mp4')) or 'mp4'
+                    extension = clean_text(ser.get('container_extension', 'mp4')) or 'mp4'
                     if not episode_id:
                         continue
-                    play_url   = '{}{}.{}'.format(self.play_series, str(episode_id), extension)
-                    name       = first_clean_text(ser, 'title', 'name')
-                    ep_info    = ser.get('info', {})
-                    thumb      = clean_text(ep_info.get('movie_image', ''))
+                    play_url = '{}{}.{}'.format(self.play_series, str(episode_id), extension)
+                    name = first_clean_text(ser, 'title', 'name')
+                    ep_info = ser.get('info', {})
+                    thumb = clean_text(ep_info.get('movie_image', ''))
                     background = thumb
-                    plot       = clean_text(first_clean_text(ep_info, 'plot', 'description', 'overview'))
-                    releasedate= clean_text(first_clean_text(ep_info, 'releasedate', 'release_date', 'aired'))
-                    cast       = str(clean_text(info.get('cast', ''))).split()
-                    rating     = clean_text(str(info.get('rating_5based', '') or info.get('rating', '')))
-                    duration   = clean_text(str(ep_info.get('duration', '') or ep_info.get('duration_secs', '')))
-                    genre      = clean_text(first_clean_text(info, 'genre', 'genres'))
+                    plot = clean_text(first_clean_text(ep_info, 'plot', 'description', 'overview'))
+                    releasedate = clean_text(first_clean_text(ep_info, 'releasedate', 'release_date', 'aired'))
+                    cast = str(clean_text(info.get('cast', ''))).split()
+                    rating = clean_text(str(info.get('rating_5based', '') or info.get('rating', '')))
+                    duration = clean_text(str(ep_info.get('duration', '') or ep_info.get('duration_secs', '')))
+                    genre = clean_text(first_clean_text(info, 'genre', 'genres'))
                     itens.append((name, play_url, thumb, background, plot,
                                   releasedate, cast, rating, duration, genre))
                 except Exception:
@@ -1117,8 +1181,8 @@ class API:
         return itens
 
     def vod(self, url=''):
-        itens      = []
-        open_data  = self.http(url or self.vod_url, 'vod' if url else None)
+        itens = []
+        open_data = self.http(url or self.vod_url, 'vod' if url else None)
         if not open_data:
             return itens
         try:
@@ -1128,7 +1192,7 @@ class API:
             for a in all_cats:
                 try:
                     if '<playlist_url>' in open_data:
-                        name    = clean_text(self.b64(self.regex_from_to(a, '<title>', '</title>')))
+                        name = clean_text(self.b64(self.regex_from_to(a, '<title>', '</title>')))
                         vod_url = self.check_protocol(
                             self.regex_from_to(a, '<playlist_url>', '</playlist_url>')
                             .replace('<![CDATA[', '').replace(']]>', '')
@@ -1137,23 +1201,23 @@ class API:
                             continue
                         itens.append(('dir', name, vod_url))
                     else:
-                        name    = clean_text(self.b64(self.regex_from_to(a, '<title>', '</title>')))
-                        thumb   = self.regex_from_to(a, '<desc_image>', '</desc_image>').replace('<![CDATA[', '').replace(']]>', '')
+                        name = clean_text(self.b64(self.regex_from_to(a, '<title>', '</title>')))
+                        thumb = self.regex_from_to(a, '<desc_image>', '</desc_image>').replace('<![CDATA[', '').replace(']]>', '')
                         vod_url = self.check_protocol(
                             self.regex_from_to(a, '<stream_url>', '</stream_url>')
                             .replace('<![CDATA[', '').replace(']]>', '')
                         )
-                        desc    = self.b64(self.regex_from_to(a, '<description>', '</description>'))
-                        plot    = clean_text(self.regex_from_to(desc, 'PLOT:', '\n'))
-                        cast_s  = self.regex_from_to(desc, 'CAST:', '\n')
-                        ratin   = clean_text(self.regex_from_to(desc, 'RATING:', '\n'))
-                        year_s  = self.regex_from_to(desc, 'RELEASEDATE:', '\n').replace(' ', '-')
-                        ym      = re.compile(r'-.*?-.*?-(.*?)-', re.DOTALL).findall(year_s)
-                        year    = str(ym).replace("['", '').replace("']", '') if ym else ''
-                        runt    = clean_text(self.regex_from_to(desc, 'DURATION_SECS:', '\n'))
-                        genre   = clean_text(self.regex_from_to(desc, 'GENRE:', '\n'))
+                        desc = self.b64(self.regex_from_to(a, '<description>', '</description>'))
+                        plot = clean_text(self.regex_from_to(desc, 'PLOT:', '\n'))
+                        cast_s = self.regex_from_to(desc, 'CAST:', '\n')
+                        ratin = clean_text(self.regex_from_to(desc, 'RATING:', '\n'))
+                        year_s = self.regex_from_to(desc, 'RELEASEDATE:', '\n').replace(' ', '-')
+                        ym = re.compile(r'-.*?-.*?-(.*?)-', re.DOTALL).findall(year_s)
+                        year = str(ym).replace("['", '').replace("']", '') if ym else ''
+                        runt = clean_text(self.regex_from_to(desc, 'DURATION_SECS:', '\n'))
+                        genre = clean_text(self.regex_from_to(desc, 'GENRE:', '\n'))
                         background = ''
-                        cast_list  = str(cast_s).split() if cast_s else []
+                        cast_list = str(cast_s).split() if cast_s else []
                         itens.append(('play', name, vod_url, thumb, background,
                                       plot, year, cast_list, ratin, genre))
                 except Exception:
