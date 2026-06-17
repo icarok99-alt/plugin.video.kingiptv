@@ -198,7 +198,8 @@ class IMDBScraper:
                 return itens
             seasons = data['props']['pageProps']['mainColumnData']['episodes']['seasons']
             imdb_id = 'tt' + re.findall(r'/tt(.*?)/', url)[0]
-            base_url = f'{self.base}/title/{imdb_id}/episodes/?season='
+            locale = '/pt' if '/pt/' in url else ''
+            base_url = f'{self.base}{locale}/title/{imdb_id}/episodes/?season='
             for season in seasons:
                 num = str(season['number'])
                 name = f'{num} temporada'
