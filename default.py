@@ -60,47 +60,6 @@ def getString(string_id):
 
 profile = xbmcvfs.translatePath('special://profile/addon_data/plugin.video.kingiptv')
 
-try:
-    import github_update
-    from datetime import datetime
-    import requests
-
-    UPDATE_CHECK_FILE = os.path.join(profile, 'last_checked_date.txt')
-    REMOTE_DATE_URL = 'https://raw.githubusercontent.com/icarok99-alt/plugin.video.kingiptv/main/last_update.txt'
-
-    def get_local_date():
-        if os.path.exists(UPDATE_CHECK_FILE):
-            with open(UPDATE_CHECK_FILE, 'r') as f:
-                content = f.read().strip()
-                if content:
-                    try:
-                        return datetime.strptime(content, '%d-%m-%Y')
-                    except ValueError:
-                        pass
-        return datetime.strptime('12-06-2026', '%d-%m-%Y')
-
-    def save_local_date(date_str):
-        with open(UPDATE_CHECK_FILE, 'w') as f:
-            f.write(date_str)
-
-    def is_update_needed_by_date():
-        try:
-            response = requests.get(REMOTE_DATE_URL, timeout=5)
-            if response.status_code == 200:
-                remote_date_str = response.text.strip()
-                remote_date = datetime.strptime(remote_date_str, '%d-%m-%Y')
-                local_date = get_local_date()
-                if remote_date > local_date:
-                    save_local_date(remote_date_str)
-                    return True
-        except Exception as e:
-            print(f'Erro ao verificar data remota: {e}')
-        return False
-
-except Exception as e:
-    from xbmcgui import Dialog
-    Dialog().notification(getString(32026), str(e), xbmcgui.NOTIFICATION_ERROR, 5000)
-
 TITULO = '::: KING IPTV :::'
 API_CHANNELS = '\x68\x74\x74\x70\x73\x3a\x2f\x2f\x64\x6f\x63\x73\x2e\x67\x6f\x6f\x67\x6c\x65\x2e\x63\x6f\x6d\x2f\x75\x63\x3f\x65\x78\x70\x6f\x72\x74\x3d\x64\x6f\x77\x6e\x6c\x6f\x61\x64\x26\x69\x64\x3d\x31\x67\x52\x53\x61\x72\x30\x49\x79\x32\x6f\x47\x65\x70\x4c\x33\x4c\x6b\x4d\x74\x43\x62\x77\x54\x7a\x67\x53\x67\x68\x41\x73\x77\x36'
 API_RADIOS = '\x68\x74\x74\x70\x73\x3a\x2f\x2f\x67\x69\x73\x74\x2e\x67\x69\x74\x68\x75\x62\x75\x73\x65\x72\x63\x6f\x6e\x74\x65\x6e\x74\x2e\x63\x6f\x6d\x2f\x69\x63\x61\x72\x6f\x6b\x39\x39\x2f\x64\x65\x38\x38\x63\x33\x66\x30\x61\x34\x31\x39\x64\x32\x35\x34\x30\x33\x62\x31\x31\x30\x65\x33\x64\x31\x32\x38\x37\x31\x65\x31\x2f\x72\x61\x77\x2f\x62\x65\x33\x32\x64\x65\x32\x37\x65\x63\x33\x36\x34\x39\x36\x30\x34\x37\x66\x30\x61\x33\x35\x64\x63\x31\x38\x65\x62\x34\x34\x65\x66\x37\x39\x65\x38\x66\x63\x33\x2f\x72\x61\x64\x69\x6f\x73\x2e\x6a\x73\x6f\x6e'
@@ -176,16 +135,6 @@ def build_series_playlist(imdb_number, season_num, current_episode_num, serie_na
 
 @route('/')
 def index():
-    try:
-        if is_update_needed_by_date():
-            from xbmcgui import Dialog
-            Dialog().notification('KING IPTV', getString(32023), xbmcgui.NOTIFICATION_INFO, 5000)
-            github_update.update_files()
-            Dialog().notification('KING IPTV', getString(32024), xbmcgui.NOTIFICATION_INFO, 5000)
-    except Exception as e:
-        from xbmcgui import Dialog
-        Dialog().notification('KING IPTV', '{}: {}'.format(getString(32026), e), xbmcgui.NOTIFICATION_ERROR, 5000)
-
     addMenuItem({'name': TITULO, 'description': ''}, destiny='')
     addMenuItem({'name': getString(32000), 'description': ''}, destiny='/playlistiptv')
     addMenuItem({'name': getString(32001), 'description': ''}, destiny='/channels_pluto')
@@ -601,7 +550,7 @@ def open_imdb_episodes(param):
         end()
         setview('List')
 
-AUTO_PLAY_PRIORITY = ['upns', 'abyss', 'byse']
+AUTO_PLAY_PRIORITY = ['abyss', 'byse', 'upns']
 
 def _sort_players_by_priority(players):
     priority_map = {name: idx for idx, name in enumerate(AUTO_PLAY_PRIORITY)}
