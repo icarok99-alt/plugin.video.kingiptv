@@ -556,9 +556,9 @@ def _sort_players_by_priority(players):
     priority_map = {name: idx for idx, name in enumerate(AUTO_PLAY_PRIORITY)}
 
     def _key(item):
-        source_name = (item[0] or '').lower()
+        search_text = ((item[0] or '') + ' ' + (item[1] or '')).lower()
         for p_name, p_idx in priority_map.items():
-            if p_name in source_name:
+            if p_name in search_text:
                 return p_idx
         return len(AUTO_PLAY_PRIORITY)
 
