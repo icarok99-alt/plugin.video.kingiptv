@@ -770,7 +770,6 @@ def play_resolve_series(param):
             play_item.setInfo('video', info_dict)
 
         xbmcplugin.setResolvedUrl(int(sys.argv[1]), True, play_item)
-        loading_manager.close()
 
         playlist = xbmc.PlayList(xbmc.PLAYLIST_VIDEO)
 
@@ -794,6 +793,8 @@ def play_resolve_series(param):
             kwargs={'resume_time': resume_time},
             daemon=True
         ).start()
+
+        loading_manager.close()
     except Exception as e:
         loading_manager.force_close()
         notify(getString(32016))
