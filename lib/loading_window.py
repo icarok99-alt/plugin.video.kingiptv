@@ -163,7 +163,6 @@ class LoadingManager:
         self._lock        = threading.Lock()
         self._window      = None
         self._generation  = 0
-        self._wait_thread = None
         self._monitor     = _PlaybackMonitor()
         self._busy_stop   = threading.Event()
 
@@ -209,11 +208,6 @@ class LoadingManager:
             self._do_dismiss(old_window)
 
         self._monitor.cancel()
-
-        old_thread = self._wait_thread
-        if old_thread is not None and old_thread.is_alive():
-            old_thread.join(timeout=1.5)
-
         self._monitor.reset()
 
         fanart     = fanart_path or self._default_fanart()
@@ -231,7 +225,6 @@ class LoadingManager:
         with self._lock:
             if self._generation == current_gen:
                 self._window      = new_window
-                self._wait_thread = None
 
         if self._generation != current_gen:
             self._do_dismiss(new_window)
@@ -266,29 +259,22 @@ class LoadingManager:
 
     set_phase2 = set_phase3
 
-    def close(self):
+    def close(self, max_wait=10.0):
         with self._lock:
             window = self._window
-            gen    = self._generation
+            self._window = None
+            gen = self._generation
 
         if window is None:
             return
 
-        def _wait_and_close():
-            self._monitor.wait_until_playing(max_wait=45.0)
-            with self._lock:
-                if self._window is window and self._generation == gen:
-                    self._window = None
-                    do_dismiss = True
-                else:
-                    do_dismiss = False
-            if do_dismiss:
-                self._do_dismiss(window)
+        self._monitor.wait_until_playing(max_wait=max_wait)
 
-        t = threading.Thread(target=_wait_and_close, daemon=True)
         with self._lock:
-            self._wait_thread = t
-        t.start()
+            if self._generation != gen:
+                return
+
+        self._do_dismiss(window)
 
     def force_close(self):
         with self._lock:
