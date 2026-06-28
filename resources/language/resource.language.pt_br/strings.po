@@ -213,6 +213,10 @@ msgctxt "#33004"
 msgid "Are you sure you want to delete the database?"
 msgstr "Tem certeza de que deseja excluir o banco de dados?"
 
+msgctxt "#33005"
+msgid "Database and thumb cache deleted successfully."
+msgstr "Banco de dados e cache de thumbs excluídos com sucesso."
+
 msgctxt "#32120"
 msgid "Autoplay"
 msgstr "Reprodução automática"

@@ -16,7 +16,7 @@
     <category label="33000">
         <setting id="db_auto_cleanup_enabled" type="bool" label="33001" default="false"/>
         <setting id="db_cleanup_days" type="number" label="33002" default="7" enable="eq(-1,true)"/>
-        <setting id="db_manual_cleanup" type="action" label="33003" action="RunScript(special://home/addons/plugin.video.kingiptv/lib/db_manager.py)"/>
+        <setting id="db_manual_cleanup" type="action" label="33003" action="RunScript(special://home/addons/plugin.video.kingiptv/lib/db_manager.py,clear_all)"/>
     </category>
     <category label="Proxy">
         <setting id="proxy_port" type="number" label="Porta do Proxy Local" default="9097"/>

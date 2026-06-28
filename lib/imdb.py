@@ -44,7 +44,7 @@ class IMDBScraper:
 
     def _get(self, url: str) -> str:
         resp = self.session.get(url, headers=self.headers)
-        if resp.status_code in (202, 403, 429):  # fix: 202 indica bloqueio pelo WAF
+        if resp.status_code in (202, 403, 429):
             self._init_waf()
             resp = self.session.get(url, headers=self.headers)
         return resp.text
@@ -87,7 +87,7 @@ class IMDBScraper:
             description = html.unescape(str(item.get('plot', '')).strip())
             if not img or not title:
                 continue
-            page = f'{self.base}/title/{imdb_id}/'
+            page = f'{self.base}/pt/title/{imdb_id}/'
             itens.append((title, img, page, description, imdb_id, orig_title, year))
         return itens
 
@@ -180,6 +180,7 @@ class IMDBScraper:
                     continue
 
                 imdb_id = 'tt' + re.findall(r'/tt(.*?)/', item_url)[0]
+                item_url = f'{self.base}/pt/title/{imdb_id}/'
                 year = year_map.get(imdb_id, '')
                 all_items.append((display_name, image, item_url, description, imdb_id, orig_name, year))
 
@@ -198,8 +199,7 @@ class IMDBScraper:
                 return itens
             seasons = data['props']['pageProps']['mainColumnData']['episodes']['seasons']
             imdb_id = 'tt' + re.findall(r'/tt(.*?)/', url)[0]
-            locale = '/pt' if '/pt/' in url else ''
-            base_url = f'{self.base}{locale}/title/{imdb_id}/episodes/?season='
+            base_url = f'{self.base}/pt/title/{imdb_id}/episodes/?season='
             for season in seasons:
                 num = str(season['number'])
                 name = f'{num} temporada'
@@ -224,7 +224,7 @@ class IMDBScraper:
                 episode_name = html.unescape(
                     str(title_obj.get('text', f'Episódio {idx}') if isinstance(title_obj, dict) else title_obj).strip()
                 )
-                img = resize_poster(ep.get('image', {}).get('url', ''))
+                img = resize_poster(ep.get('image', {}).get('url', ''), size='V1_QL100_UX582')
                 description = html.unescape(ep.get('plot', ''))
                 itens.append((str(idx), episode_name, img, fanart, description))
         except Exception:
