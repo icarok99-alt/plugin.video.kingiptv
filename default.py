@@ -8,7 +8,7 @@ from lib.helper import *
 import inputstreamhelper
 from lib import xtream, tunein, pluto, imdb, api_vod
 from lib.proxy import UnifiedServer, PROXY_PORT
-from lib.db_manager import KingDatabaseManager, get_db, get_thumb_path
+from lib.db_manager import KingDatabaseManager, get_db
 from lib.loading_window import loading_manager
 
 _addon = xbmcaddon.Addon()
@@ -509,8 +509,6 @@ def open_imdb_episodes(param):
                 'playcount': 1 if int(episode_number) in watched_set else 0,
                 'resume_time': resume_map.get(int(episode_number)),
             }, destiny='/play_resolve_series')
-            if img:
-                threading.Thread(target=get_thumb_path, args=(img, False), daemon=True).start()
         end()
         setview('List')
 
