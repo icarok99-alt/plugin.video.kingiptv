@@ -1,98 +1,80 @@
 # -*- coding: utf-8 -*-
 
 import os
-import time
+import sys
 import json
 import threading
 from lib.helper import *
 import inputstreamhelper
 from lib import xtream, tunein, pluto, imdb, api_vod
 from lib.proxy import UnifiedServer, PROXY_PORT
-
-_proxy_server   = None
-_proxy_lock     = threading.Lock()
-
-def _start_proxy_if_needed():
-    global _proxy_server
-    if _proxy_server is not None:
-        return PROXY_PORT
-    with _proxy_lock:
-        if _proxy_server is not None:
-            return PROXY_PORT
-        try:
-            server = UnifiedServer(port=PROXY_PORT)
-            t = threading.Thread(target=server.start)
-            t.daemon = True
-            t.start()
-            _proxy_server = server
-        except Exception:
-            pass
-    return PROXY_PORT
-from lib.resolver import Resolver
-
-try:
-    from urllib import urlencode
-except ImportError:
-    from urllib.parse import urlencode
-
-from lib.player import get_player
-from lib.skipservice import prefetch_skip_timestamps
-from lib.db_manager import KingDatabaseManager
+from lib.db_manager import KingDatabaseManager, get_db, get_thumb_path
 from lib.loading_window import loading_manager
 
-db_manager = KingDatabaseManager()
-db_manager.check_auto_expiry()
-
-from lib.database import KingDatabase
-
-_db = None
-
-def get_db():
-    global _db
-    if _db is None:
-        _db = KingDatabase()
-    return _db
-
 _addon = xbmcaddon.Addon()
-
-def getString(string_id):
-    return _addon.getLocalizedString(string_id)
+getString = _addon.getLocalizedString
 
 profile = xbmcvfs.translatePath('special://profile/addon_data/plugin.video.kingiptv')
+if not exists(profile):
+    try:
+        os.makedirs(profile)
+    except OSError:
+        pass
 
+IPTV_PROBLEM_LOG = translate(os.path.join(profile, 'iptv_problems_log.txt'))
 TITULO = '::: KING IPTV :::'
 API_CHANNELS = '\x68\x74\x74\x70\x73\x3a\x2f\x2f\x64\x6f\x63\x73\x2e\x67\x6f\x6f\x67\x6c\x65\x2e\x63\x6f\x6d\x2f\x75\x63\x3f\x65\x78\x70\x6f\x72\x74\x3d\x64\x6f\x77\x6e\x6c\x6f\x61\x64\x26\x69\x64\x3d\x31\x67\x52\x53\x61\x72\x30\x49\x79\x32\x6f\x47\x65\x70\x4c\x33\x4c\x6b\x4d\x74\x43\x62\x77\x54\x7a\x67\x53\x67\x68\x41\x73\x77\x36'
 API_RADIOS = '\x68\x74\x74\x70\x73\x3a\x2f\x2f\x67\x69\x73\x74\x2e\x67\x69\x74\x68\x75\x62\x75\x73\x65\x72\x63\x6f\x6e\x74\x65\x6e\x74\x2e\x63\x6f\x6d\x2f\x69\x63\x61\x72\x6f\x6b\x39\x39\x2f\x64\x65\x38\x38\x63\x33\x66\x30\x61\x34\x31\x39\x64\x32\x35\x34\x30\x33\x62\x31\x31\x30\x65\x33\x64\x31\x32\x38\x37\x31\x65\x31\x2f\x72\x61\x77\x2f\x62\x65\x33\x32\x64\x65\x32\x37\x65\x63\x33\x36\x34\x39\x36\x30\x34\x37\x66\x30\x61\x33\x35\x64\x63\x31\x38\x65\x62\x34\x34\x65\x66\x37\x39\x65\x38\x66\x63\x33\x2f\x72\x61\x64\x69\x6f\x73\x2e\x6a\x73\x6f\x6e'
 
-if not exists(profile):
-    try:
-        os.makedirs(profile)
-    except OSError as e:
-        if e.errno != 17:
+db_manager = KingDatabaseManager()
+db_manager.check_auto_expiry()
+
+proxy_server = None
+proxy_lock = threading.Lock()
+
+def start_proxy_if_needed():
+    global proxy_server
+    if proxy_server is not None:
+        return PROXY_PORT
+    with proxy_lock:
+        if proxy_server is not None:
+            return PROXY_PORT
+        try:
+            server = UnifiedServer(port=PROXY_PORT)
+            t = threading.Thread(target=server.start, daemon=True)
+            t.start()
+            proxy_server = server
+        except Exception:
             pass
-IPTV_PROBLEM_LOG = translate(os.path.join(profile, 'iptv_problems_log.txt'))
+    return PROXY_PORT
+
+def set_episode_property(imdb_id, season, episode, resume_time=None):
+    win = xbmcgui.Window(10000)
+    data = {
+        'imdb_id': imdb_id,
+        'season': season,
+        'episode': episode,
+        'resume_time': resume_time
+    }
+    win.setProperty('kingiptv_episode', json.dumps(data))
 
 def build_series_playlist(imdb_number, season_num, current_episode_num, serie_name, original_name, all_episodes):
     if not all_episodes or not isinstance(all_episodes, list):
         return
     if not isinstance(season_num, int) or not isinstance(current_episode_num, int):
         return
-
     playlist = xbmc.PlayList(xbmc.PLAYLIST_VIDEO)
     playlist.clear()
-
     for episode_data in all_episodes:
         if not isinstance(episode_data, dict):
             continue
         ep_num = episode_data.get('episode')
         if not ep_num or not isinstance(ep_num, int):
             continue
-
         name = episode_data.get('episode_title', '')
         img = episode_data.get('thumbnail', '')
         fanart = episode_data.get('fanart', '')
         description = episode_data.get('description', '')
-
         if ep_num >= current_episode_num:
             params = {
                 'serie_name': serie_name,
@@ -105,13 +87,10 @@ def build_series_playlist(imdb_number, season_num, current_episode_num, serie_na
                 'imdbnumber': imdb_number,
                 'description': description
             }
-
             plugin_url = 'plugin://plugin.video.kingiptv/play_resolve_series/{}'.format(urlencode(params))
-
             display_label = name if name else '{}x{}'.format(season_num, str(ep_num).zfill(2))
             list_item = xbmcgui.ListItem(display_label)
             list_item.setArt({'thumb': img, 'icon': img, 'fanart': fanart or img})
-
             kodi_version = int(xbmc.getInfoLabel('System.BuildVersion').split('.')[0])
             if kodi_version >= 20:
                 info_tag = list_item.getVideoInfoTag()
@@ -130,7 +109,6 @@ def build_series_playlist(imdb_number, season_num, current_episode_num, serie_na
                     'season': season_num,
                     'episode': ep_num,
                 })
-
             playlist.add(url=plugin_url, listitem=list_item)
 
 @route('/')
@@ -147,15 +125,14 @@ def index():
 
 @route('/settings')
 def settings():
-    addon = xbmcaddon.Addon()
-    addon.openSettings()
+    xbmcaddon.Addon().openSettings()
 
 @route('/playlistiptv')
 def playlistiptv():
     iptv = xtream.parselist(API_CHANNELS)
     if iptv:
         for n, (dns, username, password) in enumerate(iptv):
-            n = n + 1
+            n += 1
             addMenuItem({'name': 'LISTA {0}'.format(str(n)), 'description': '', 'dns': dns, 'username': str(username), 'password': str(password)}, destiny='/cat_channels')
         end()
         setview('WideList')
@@ -177,11 +154,7 @@ def cat_channels(param):
         setview('WideList')
     else:
         url_problem = '{0}/get.php?username={1}&password={2}\n'.format(dns, username, password)
-        if six.PY2:
-            import io
-            open_file = lambda filename, mode: io.open(filename, mode, encoding='utf-8')
-        else:
-            open_file = lambda filename, mode: open(filename, mode, encoding='utf-8')
+        open_file = lambda filename, mode: open(filename, mode, encoding='utf-8') if six.PY3 else io.open(filename, mode, encoding='utf-8')
         if exists(IPTV_PROBLEM_LOG):
             check = False
             with open(IPTV_PROBLEM_LOG, "r") as arquivo:
@@ -217,7 +190,7 @@ def play_iptv(param):
     description = param.get('description', '')
     iconimage = param.get('iconimage', '')
     url = param.get('url', '')
-    proxy_url = 'http://127.0.0.1:{}/?url={}'.format(_start_proxy_if_needed(), quote_plus(url))
+    proxy_url = 'http://127.0.0.1:{}/?url={}'.format(start_proxy_if_needed(), quote_plus(url))
     play_item = xbmcgui.ListItem(path=proxy_url)
     play_item.setContentLookup(False)
     play_item.setArt({"icon": iconimage or "DefaultVideo.png", "thumb": iconimage or "DefaultVideo.png"})
@@ -505,31 +478,21 @@ def open_imdb_episodes(param):
     url = param.get('url', '')
     imdb_id = param.get('imdbnumber', '')
     season = param.get('season', '')
-
     itens = imdb.IMDBScraper().imdb_episodes(url)
     if itens:
-        get_db().save_season_episodes(
+        db = get_db()
+        db.save_season_episodes(
             imdb_id=imdb_id,
             season=int(season),
             serie_name=serie_name,
             original_name=original_name,
             episodes_data=itens
         )
-
-        prefetch_skip_timestamps(
-            imdb_id=imdb_id,
-            season=int(season),
-            episode_count=len(itens),
-            database=get_db()
-        )
-
-        watched_set = get_db().get_watched_in_season(imdb_id, int(season))
-        resume_map = get_db().get_season_resume_times(imdb_id, int(season))
-
+        watched_set = db.get_watched_in_season(imdb_id, int(season))
+        resume_map = db.get_season_resume_times(imdb_id, int(season))
         setcontent('episodes')
         for episode_number, name, img, fanart, description in itens:
             name_full = '{}x{} - {}'.format(season, str(episode_number).zfill(2), name)
-
             addMenuItem({
                 'name': name_full,
                 'description': description,
@@ -546,36 +509,57 @@ def open_imdb_episodes(param):
                 'playcount': 1 if int(episode_number) in watched_set else 0,
                 'resume_time': resume_map.get(int(episode_number)),
             }, destiny='/play_resolve_series')
-
+            if img:
+                threading.Thread(target=get_thumb_path, args=(img, False), daemon=True).start()
         end()
         setview('List')
 
-AUTO_PLAY_PRIORITY = ['byse', 'abyss', 'upns']
+def try_direct_players(players, start_idx=None):
+    if not players:
+        return None, None
 
-def _sort_players_by_priority(players):
-    priority_map = {name: idx for idx, name in enumerate(AUTO_PLAY_PRIORITY)}
+    n = len(players)
+    if start_idx is None:
+        order = list(range(n))
+    else:
+        order = [start_idx] + [(start_idx + 1 + i) % n for i in range(n - 1)]
 
-    def _key(item):
-        search_text = ((item[0] or '') + ' ' + (item[1] or '')).lower()
-        for p_name, p_idx in priority_map.items():
-            if p_name in search_text:
-                return p_idx
-        return len(AUTO_PLAY_PRIORITY)
+    vod = api_vod.VOD()
+    for idx in order:
+        _, stream_url = players[idx]
+        if vod.validate_stream(stream_url):
+            return stream_url, None
 
-    resolver = Resolver()
-    for source_name, stream_url in sorted(players, key=_key):
-        xbmc.log('[KingIPTV] Tentando source "{}" ...'.format(source_name), xbmc.LOGINFO)
-        try:
-            resolved, sub = resolver.resolverurls(stream_url)
-            if resolved:
-                xbmc.log('[KingIPTV] Source "{}" OK.'.format(source_name), xbmc.LOGINFO)
-                return resolved, sub
-            xbmc.log('[KingIPTV] Source "{}" falhou. Tentando proximo...'.format(source_name), xbmc.LOGWARNING)
-        except Exception as e:
-            xbmc.log('[KingIPTV] Source "{}" erro: {}. Tentando proximo...'.format(source_name, e), xbmc.LOGWARNING)
+    first_url = players[order[0]][1] if order else None
+    return first_url, None
 
-    xbmc.log('[KingIPTV] Todos os sources falharam.', xbmc.LOGERROR)
-    return None, None
+def build_play_item(stream, sub, title, iconimage, fanart, headers=None):
+    stream_lower = stream.lower()
+
+    if headers:
+        header_str = '&'.join(
+            '{}={}'.format(k, quote_plus(str(v)))
+            for k, v in headers.items()
+        )
+        path = '{}|{}'.format(stream, header_str)
+    else:
+        path = stream
+
+    play_item = xbmcgui.ListItem(label=title, path=path)
+    play_item.setArt({'thumb': iconimage, 'icon': iconimage, 'fanart': fanart or iconimage})
+    play_item.setContentLookup(False)
+
+    if '.mpd' in stream_lower:
+        play_item.setMimeType('application/dash+xml')
+    elif '.m3u8' in stream_lower or 'hls' in stream_lower:
+        play_item.setMimeType('application/x-mpegURL')
+    elif stream_lower.endswith(('.mp4', '.mkv', '.avi', '.mov', '.webm', '.ts')):
+        play_item.setMimeType('video/mp4')
+
+    if sub:
+        play_item.setSubtitles([sub])
+
+    return play_item
 
 @route('/play_resolve_movies')
 def play_resolve_movies(param):
@@ -588,28 +572,27 @@ def play_resolve_movies(param):
     original_name = param.get('original_name', '')
 
     loading_manager.show()
-
     try:
         players = api_vod.VOD().movie(imdb_number)
-
         if not players:
             loading_manager.force_close()
             notify(getString(32016))
+            xbmcplugin.setResolvedUrl(int(sys.argv[1]), False, xbmcgui.ListItem())
             return
 
         autoplay = xbmcaddon.Addon().getSettingBool('autoplay_enabled')
 
         if autoplay:
             loading_manager.set_phase3()
-            stream, sub = _sort_players_by_priority(players)
+            stream, sub = try_direct_players(players, start_idx=None)
         else:
             idx = loading_manager.show_source_select(players)
             if idx < 0:
                 loading_manager.force_close()
+                xbmcplugin.setResolvedUrl(int(sys.argv[1]), False, xbmcgui.ListItem())
                 return
             loading_manager.set_phase3()
-            _, raw_stream = players[idx]
-            stream, sub = Resolver().resolverurls(raw_stream)
+            stream, sub = try_direct_players(players, start_idx=idx)
 
         if not stream:
             loading_manager.force_close()
@@ -617,20 +600,7 @@ def play_resolve_movies(param):
             xbmcplugin.setResolvedUrl(int(sys.argv[1]), False, xbmcgui.ListItem())
             return
 
-        play_item = xbmcgui.ListItem(path=stream)
-        play_item.setArt({'thumb': iconimage, 'icon': iconimage, 'fanart': fanart or iconimage})
-        play_item.setContentLookup(False)
-
-        stream_lower = stream.lower()
-        if '.mpd' in stream_lower:
-            play_item.setMimeType('application/dash+xml')
-        elif '.m3u8' in stream_lower or 'hls' in stream_lower:
-            play_item.setMimeType('application/x-mpegURL')
-        elif stream_lower.endswith(('.mp4', '.mkv', '.avi', '.mov', '.webm', '.ts')):
-            play_item.setMimeType('video/mp4')
-
-        if sub:
-            play_item.setSubtitles([sub])
+        play_item = build_play_item(stream, sub, movie_name, iconimage, fanart, headers=api_vod.PLAYER_HEADERS)
 
         kodi_version = int(xbmc.getInfoLabel('System.BuildVersion').split('.')[0])
         if kodi_version >= 20:
@@ -648,16 +618,17 @@ def play_resolve_movies(param):
                 'plot': description,
                 'imdbnumber': imdb_number,
                 'mediatype': 'movie',
-                'originaltitle': original_name
+                'originaltitle': original_name,
             }
             if year:
                 info_dict['year'] = int(year)
             play_item.setInfo('video', info_dict)
 
+        set_episode_property(imdb_number, 0, 0)
         xbmcplugin.setResolvedUrl(int(sys.argv[1]), True, play_item)
         loading_manager.close()
 
-    except Exception as e:
+    except Exception:
         loading_manager.force_close()
         notify(getString(32016))
         xbmcplugin.setResolvedUrl(int(sys.argv[1]), False, xbmcgui.ListItem())
@@ -677,31 +648,28 @@ def play_resolve_series(param):
     if not episode or not season:
         notify(getString(32021))
         return
-
     if not str(episode).isdigit() or not str(season).isdigit():
         notify(getString(32022))
         return
 
     current_episode_num = int(episode)
     season_num = int(season)
-
     if current_episode_num <= 0 or season_num <= 0:
         notify(getString(32022))
         return
 
-    resume_data = get_db().get_resume_time(imdb_number, season_num, current_episode_num)
+    db = get_db()
+    resume_data = db.get_resume_time(imdb_number, season_num, current_episode_num)
     resume_time = None
     if resume_data and resume_data[0] > 0:
         if ask_resume(resume_data[0]):
             resume_time = resume_data[0]
         else:
-            get_db().clear_resume_time(imdb_number, season_num, current_episode_num)
+            db.clear_resume_time(imdb_number, season_num, current_episode_num)
 
     loading_manager.show()
-
     try:
         players = api_vod.VOD().tvshows(imdb_number, season_num, current_episode_num)
-
         if not players:
             loading_manager.force_close()
             notify(getString(32016))
@@ -711,15 +679,14 @@ def play_resolve_series(param):
 
         if autoplay:
             loading_manager.set_phase3()
-            stream, sub = _sort_players_by_priority(players)
+            stream, sub = try_direct_players(players, start_idx=None)
         else:
             idx = loading_manager.show_source_select(players)
             if idx < 0:
                 loading_manager.force_close()
                 return
             loading_manager.set_phase3()
-            _, raw_stream = players[idx]
-            stream, sub = Resolver().resolverurls(raw_stream)
+            stream, sub = try_direct_players(players, start_idx=idx)
 
         if not stream:
             loading_manager.force_close()
@@ -728,27 +695,12 @@ def play_resolve_series(param):
             xbmc.PlayList(xbmc.PLAYLIST_VIDEO).clear()
             return
 
-        playback_title = episode_title
-
-        play_item = xbmcgui.ListItem(label=playback_title, path=stream)
-        play_item.setArt({'thumb': iconimage, 'icon': iconimage, 'fanart': fanart or iconimage})
-        play_item.setContentLookup(False)
-
-        stream_lower = stream.lower()
-        if '.mpd' in stream_lower:
-            play_item.setMimeType('application/dash+xml')
-        elif '.m3u8' in stream_lower or 'hls' in stream_lower:
-            play_item.setMimeType('application/x-mpegURL')
-        elif stream_lower.endswith(('.mp4', '.mkv', '.avi', '.mov', '.webm', '.ts')):
-            play_item.setMimeType('video/mp4')
-
-        if sub:
-            play_item.setSubtitles([sub])
+        play_item = build_play_item(stream, sub, episode_title, iconimage, fanart, headers=api_vod.PLAYER_HEADERS)
 
         kodi_version = int(xbmc.getInfoLabel('System.BuildVersion').split('.')[0])
         if kodi_version >= 20:
             info_tag = play_item.getVideoInfoTag()
-            info_tag.setTitle(playback_title)
+            info_tag.setTitle(episode_title)
             info_tag.setTvShowTitle(serie_name)
             info_tag.setOriginalTitle(original_name)
             info_tag.setPlot(description)
@@ -757,8 +709,8 @@ def play_resolve_series(param):
             info_tag.setSeason(season_num)
             info_tag.setEpisode(current_episode_num)
         else:
-            info_dict = {
-                'title': playback_title,
+            play_item.setInfo('video', {
+                'title': episode_title,
                 'tvshowtitle': serie_name,
                 'originaltitle': original_name,
                 'plot': description,
@@ -766,15 +718,14 @@ def play_resolve_series(param):
                 'mediatype': 'episode',
                 'season': season_num,
                 'episode': current_episode_num,
-            }
-            play_item.setInfo('video', info_dict)
+            })
 
+        set_episode_property(imdb_number, season_num, current_episode_num, resume_time)
         xbmcplugin.setResolvedUrl(int(sys.argv[1]), True, play_item)
 
         playlist = xbmc.PlayList(xbmc.PLAYLIST_VIDEO)
-
         if playlist.size() <= 1:
-            all_episodes = get_db().get_season_episodes(imdb_number, season_num)
+            all_episodes = db.get_season_episodes(imdb_number, season_num)
             if all_episodes:
                 build_series_playlist(
                     imdb_number=imdb_number,
@@ -782,20 +733,12 @@ def play_resolve_series(param):
                     current_episode_num=current_episode_num,
                     serie_name=serie_name,
                     original_name=original_name,
-                    all_episodes=all_episodes
+                    all_episodes=all_episodes,
                 )
 
-        player = get_player()
-
-        threading.Thread(
-            target=player.start_monitoring,
-            args=(imdb_number, season_num, current_episode_num),
-            kwargs={'resume_time': resume_time},
-            daemon=True
-        ).start()
-
         loading_manager.close()
-    except Exception as e:
+
+    except Exception:
         loading_manager.force_close()
         notify(getString(32016))
         xbmcplugin.setResolvedUrl(int(sys.argv[1]), False, xbmcgui.ListItem())
