@@ -4,6 +4,7 @@ import os
 import sys
 import hashlib
 import shutil
+import threading
 import xbmc
 import xbmcgui
 import xbmcaddon
@@ -20,6 +21,11 @@ ADDON = xbmcaddon.Addon(ADDON_ID)
 ADDON_DATA = xbmcvfs.translatePath('special://profile/addon_data/{}/'.format(ADDON_ID))
 DATABASE_PATH = os.path.join(ADDON_DATA, 'kingiptv.db')
 CACHE_DIR = os.path.join(ADDON_DATA, 'thumb_cache')
+
+THUMB_TTL_DAYS = 30
+
+_thumb_locks_meta = threading.Lock()
+_thumb_locks = {}
 
 _db_instance = None
 
@@ -39,29 +45,79 @@ def _ensure_cache_dir():
     if not xbmcvfs.exists(CACHE_DIR):
         xbmcvfs.mkdirs(CACHE_DIR)
 
+def _real_path(path):
+    if path.startswith('special://'):
+        return xbmcvfs.translatePath(path)
+    return path
+
+def _is_cache_valid(local_path):
+    try:
+        real = _real_path(local_path)
+        if not os.path.exists(real):
+            return False
+        age = datetime.now() - datetime.fromtimestamp(os.path.getmtime(real))
+        return age.days < THUMB_TTL_DAYS
+    except Exception:
+        return xbmcvfs.exists(local_path)
+
+def _get_url_lock(url_hash):
+    with _thumb_locks_meta:
+        if url_hash not in _thumb_locks:
+            _thumb_locks[url_hash] = threading.Lock()
+        return _thumb_locks[url_hash]
+
+def is_thumb_cached(url):
+    if not url:
+        return False
+    url_hash = hashlib.md5(url.encode('utf-8')).hexdigest()
+    ext = os.path.splitext(url.split('?')[0])[1] or '.jpg'
+    return _is_cache_valid(os.path.join(CACHE_DIR, url_hash + ext))
+
 def get_thumb_path(url, force_download=False):
     if not url:
         return None
     _ensure_cache_dir()
+
     url_hash = hashlib.md5(url.encode('utf-8')).hexdigest()
     ext = os.path.splitext(url.split('?')[0])[1] or '.jpg'
-    filename = url_hash + ext
-    local_path = os.path.join(CACHE_DIR, filename)
-    if force_download or not xbmcvfs.exists(local_path):
+    local_path = os.path.join(CACHE_DIR, url_hash + ext)
+
+    if not force_download and _is_cache_valid(local_path):
+        return local_path
+
+    url_lock = _get_url_lock(url_hash)
+    with url_lock:
+        if not force_download and _is_cache_valid(local_path):
+            return local_path
         try:
             response = requests.get(url, timeout=10, stream=True)
             if response.status_code == 200:
                 with xbmcvfs.File(local_path, 'wb') as f:
                     for chunk in response.iter_content(1024):
                         f.write(chunk)
-            else:
-                return None
+                return local_path
+            return None
         except Exception:
             return None
-    return local_path
+
+def clear_expired_cache():
+    real_cache_dir = _real_path(CACHE_DIR)
+    if not os.path.exists(real_cache_dir):
+        return 0
+    cutoff = datetime.now() - timedelta(days=THUMB_TTL_DAYS)
+    removed = 0
+    for fname in os.listdir(real_cache_dir):
+        fpath = os.path.join(real_cache_dir, fname)
+        try:
+            if os.path.isfile(fpath) and datetime.fromtimestamp(os.path.getmtime(fpath)) < cutoff:
+                os.remove(fpath)
+                removed += 1
+        except Exception:
+            pass
+    return removed
 
 def clear_cache():
-    real_cache_dir = xbmcvfs.translatePath(CACHE_DIR) if CACHE_DIR.startswith('special://') else CACHE_DIR
+    real_cache_dir = _real_path(CACHE_DIR)
     if os.path.exists(real_cache_dir):
         try:
             shutil.rmtree(real_cache_dir, ignore_errors=True)
@@ -118,6 +174,8 @@ class KingDatabaseManager:
     def check_auto_expiry(self):
         if not self._get_setting_bool('db_auto_cleanup_enabled'):
             return
+
+        clear_expired_cache()
 
         if not self._db_exists():
             return
