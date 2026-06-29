@@ -91,24 +91,13 @@ def build_series_playlist(imdb_number, season_num, current_episode_num, serie_na
             display_label = name if name else '{}x{}'.format(season_num, str(ep_num).zfill(2))
             list_item = xbmcgui.ListItem(display_label)
             list_item.setArt({'thumb': img, 'icon': img, 'fanart': fanart or img})
-            kodi_version = int(xbmc.getInfoLabel('System.BuildVersion').split('.')[0])
-            if kodi_version >= 20:
-                info_tag = list_item.getVideoInfoTag()
-                info_tag.setTitle(name)
-                info_tag.setTvShowTitle(serie_name)
-                info_tag.setPlot(description)
-                info_tag.setMediaType('episode')
-                info_tag.setSeason(season_num)
-                info_tag.setEpisode(ep_num)
-            else:
-                list_item.setInfo('video', {
-                    'title': name,
-                    'tvshowtitle': serie_name,
-                    'plot': description,
-                    'mediatype': 'episode',
-                    'season': season_num,
-                    'episode': ep_num,
-                })
+            info_tag = list_item.getVideoInfoTag()
+            info_tag.setTitle(name)
+            info_tag.setTvShowTitle(serie_name)
+            info_tag.setPlot(description)
+            info_tag.setMediaType('episode')
+            info_tag.setSeason(season_num)
+            info_tag.setEpisode(ep_num)
             playlist.add(url=plugin_url, listitem=list_item)
 
 @route('/')
@@ -195,13 +184,10 @@ def play_iptv(param):
     play_item.setContentLookup(False)
     play_item.setArt({"icon": iconimage or "DefaultVideo.png", "thumb": iconimage or "DefaultVideo.png"})
     play_item.setMimeType("application/vnd.apple.mpegurl")
-    info_tag = play_item.getVideoInfoTag() if hasattr(play_item, 'getVideoInfoTag') else None
-    if info_tag:
-        info_tag.setTitle(name)
-        info_tag.setPlot(description)
-        info_tag.setMediaType('video')
-    else:
-        play_item.setInfo('video', {'title': name, 'plot': description})
+    info_tag = play_item.getVideoInfoTag()
+    info_tag.setTitle(name)
+    info_tag.setPlot(description)
+    info_tag.setMediaType('video')
     xbmcplugin.setResolvedUrl(int(sys.argv[1]), True, play_item)
 
 @route('/channels_pluto')
@@ -239,13 +225,10 @@ def play_pluto(param):
     li.setProperty('inputstream.adaptive.live_delay', '0')
     li.setProperty('inputstream.adaptive.manifest_update_parameter', 'full')
     li.setArt({'icon': iconimage or 'DefaultVideo.png', 'thumb': iconimage or 'DefaultVideo.png'})
-    tag = li.getVideoInfoTag() if hasattr(li, 'getVideoInfoTag') else None
-    if tag:
-        tag.setTitle(name)
-        tag.setPlot(desc)
-        tag.setMediaType('video')
-    else:
-        li.setInfo('video', {'title': name, 'plot': desc})
+    tag = li.getVideoInfoTag()
+    tag.setTitle(name)
+    tag.setPlot(desc)
+    tag.setMediaType('video')
     xbmcplugin.setResolvedUrl(int(sys.argv[1]), True, li)
 
 @route('/radios')
@@ -266,12 +249,9 @@ def play_radio(param):
         play_item = xbmcgui.ListItem(path=url)
         play_item.setContentLookup(False)
         play_item.setArt({"icon": "DefaultAudio.png", "thumb": "DefaultAudio.png"})
-        info_tag = play_item.getVideoInfoTag() if hasattr(play_item, 'getVideoInfoTag') else None
-        if info_tag:
-            info_tag.setTitle(name)
-            info_tag.setMediaType('song')
-        else:
-            play_item.setInfo('music', {'title': name})
+        info_tag = play_item.getVideoInfoTag()
+        info_tag.setTitle(name)
+        info_tag.setMediaType('song')
         xbmcplugin.setResolvedUrl(int(sys.argv[1]), True, play_item)
 
 @route('/imdb_movies')
@@ -534,25 +514,42 @@ def try_direct_players(players, start_idx=None):
 def build_play_item(stream, sub, title, iconimage, fanart, headers=None):
     stream_lower = stream.lower()
 
+    is_hls = '.m3u8' in stream_lower or 'hls' in stream_lower
+    is_mpd = '.mpd' in stream_lower
+
     if headers:
         header_str = '&'.join(
             '{}={}'.format(k, quote_plus(str(v)))
             for k, v in headers.items()
         )
-        path = '{}|{}'.format(stream, header_str)
     else:
-        path = stream
+        header_str = ''
 
-    play_item = xbmcgui.ListItem(label=title, path=path)
+    if is_hls:
+        helper = inputstreamhelper.Helper('hls')
+        if helper.check_inputstream():
+            play_item = xbmcgui.ListItem(label=title, path=stream)
+            play_item.setContentLookup(False)
+            play_item.setMimeType('application/x-mpegURL')
+            play_item.setProperty('inputstream', helper.inputstream_addon)
+            if header_str:
+                play_item.setProperty('inputstream.adaptive.stream_headers', header_str)
+                play_item.setProperty('inputstream.adaptive.manifest_headers', header_str)
+        else:
+            path = '{}|{}'.format(stream, header_str) if header_str else stream
+            play_item = xbmcgui.ListItem(label=title, path=path)
+            play_item.setContentLookup(False)
+            play_item.setMimeType('application/x-mpegURL')
+    else:
+        path = '{}|{}'.format(stream, header_str) if header_str else stream
+        play_item = xbmcgui.ListItem(label=title, path=path)
+        play_item.setContentLookup(False)
+        if is_mpd:
+            play_item.setMimeType('application/dash+xml')
+        elif stream_lower.endswith(('.mp4', '.mkv', '.avi', '.mov', '.webm', '.ts')):
+            play_item.setMimeType('video/mp4')
+
     play_item.setArt({'thumb': iconimage, 'icon': iconimage, 'fanart': fanart or iconimage})
-    play_item.setContentLookup(False)
-
-    if '.mpd' in stream_lower:
-        play_item.setMimeType('application/dash+xml')
-    elif '.m3u8' in stream_lower or 'hls' in stream_lower:
-        play_item.setMimeType('application/x-mpegURL')
-    elif stream_lower.endswith(('.mp4', '.mkv', '.avi', '.mov', '.webm', '.ts')):
-        play_item.setMimeType('video/mp4')
 
     if sub:
         play_item.setSubtitles([sub])
@@ -600,27 +597,14 @@ def play_resolve_movies(param):
 
         play_item = build_play_item(stream, sub, movie_name, iconimage, fanart, headers=api_vod.PLAYER_HEADERS)
 
-        kodi_version = int(xbmc.getInfoLabel('System.BuildVersion').split('.')[0])
-        if kodi_version >= 20:
-            info_tag = play_item.getVideoInfoTag()
-            info_tag.setTitle(movie_name)
-            info_tag.setPlot(description)
-            info_tag.setIMDBNumber(imdb_number)
-            info_tag.setMediaType('movie')
-            info_tag.setOriginalTitle(original_name)
-            if year:
-                info_tag.setYear(int(year))
-        else:
-            info_dict = {
-                'title': movie_name,
-                'plot': description,
-                'imdbnumber': imdb_number,
-                'mediatype': 'movie',
-                'originaltitle': original_name,
-            }
-            if year:
-                info_dict['year'] = int(year)
-            play_item.setInfo('video', info_dict)
+        info_tag = play_item.getVideoInfoTag()
+        info_tag.setTitle(movie_name)
+        info_tag.setPlot(description)
+        info_tag.setIMDBNumber(imdb_number)
+        info_tag.setMediaType('movie')
+        info_tag.setOriginalTitle(original_name)
+        if year:
+            info_tag.setYear(int(year))
 
         set_episode_property(imdb_number, 0, 0)
         xbmcplugin.setResolvedUrl(int(sys.argv[1]), True, play_item)
@@ -695,28 +679,15 @@ def play_resolve_series(param):
 
         play_item = build_play_item(stream, sub, episode_title, iconimage, fanart, headers=api_vod.PLAYER_HEADERS)
 
-        kodi_version = int(xbmc.getInfoLabel('System.BuildVersion').split('.')[0])
-        if kodi_version >= 20:
-            info_tag = play_item.getVideoInfoTag()
-            info_tag.setTitle(episode_title)
-            info_tag.setTvShowTitle(serie_name)
-            info_tag.setOriginalTitle(original_name)
-            info_tag.setPlot(description)
-            info_tag.setIMDBNumber(imdb_number)
-            info_tag.setMediaType('episode')
-            info_tag.setSeason(season_num)
-            info_tag.setEpisode(current_episode_num)
-        else:
-            play_item.setInfo('video', {
-                'title': episode_title,
-                'tvshowtitle': serie_name,
-                'originaltitle': original_name,
-                'plot': description,
-                'imdbnumber': imdb_number,
-                'mediatype': 'episode',
-                'season': season_num,
-                'episode': current_episode_num,
-            })
+        info_tag = play_item.getVideoInfoTag()
+        info_tag.setTitle(episode_title)
+        info_tag.setTvShowTitle(serie_name)
+        info_tag.setOriginalTitle(original_name)
+        info_tag.setPlot(description)
+        info_tag.setIMDBNumber(imdb_number)
+        info_tag.setMediaType('episode')
+        info_tag.setSeason(season_num)
+        info_tag.setEpisode(current_episode_num)
 
         set_episode_property(imdb_number, season_num, current_episode_num, resume_time)
         xbmcplugin.setResolvedUrl(int(sys.argv[1]), True, play_item)
