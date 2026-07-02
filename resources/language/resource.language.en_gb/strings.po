@@ -16,51 +16,51 @@ msgstr ""
 
 # General / Menu strings (32000-32099)
 msgctxt "#32000"
-msgid "IPTV Lists"
+msgid "LIVE TV"
 msgstr ""
 
 msgctxt "#32001"
-msgid "Pluto Channels"
+msgid "PLUTO TV"
 msgstr ""
 
 msgctxt "#32002"
-msgid "Radios"
+msgid "RADIOS"
 msgstr ""
 
 msgctxt "#32003"
-msgid "IMDB Movies"
+msgid "IMDB MOVIES"
 msgstr ""
 
 msgctxt "#32004"
-msgid "IMDB TV shows"
+msgid "IMDB TV SHOWS"
 msgstr ""
 
 msgctxt "#32005"
-msgid "Settings"
+msgid "SETTINGS"
 msgstr ""
 
 msgctxt "#32006"
-msgid "Search Movie"
+msgid "SEARCH MOVIE"
 msgstr ""
 
 msgctxt "#32007"
-msgid "Top 250 Movies"
+msgid "TOP 250 MOVIES"
 msgstr ""
 
 msgctxt "#32008"
-msgid "Popular Movies"
+msgid "POPULAR MOVIES"
 msgstr ""
 
 msgctxt "#32009"
-msgid "Search TV show"
+msgid "SEARCH TV SHOW"
 msgstr ""
 
 msgctxt "#32010"
-msgid "Top 250 TV shows"
+msgid "TOP 250 TV SHOWS"
 msgstr ""
 
 msgctxt "#32011"
-msgid "Popular TV shows"
+msgid "POPULAR TV SHOWS"
 msgstr ""
 
 msgctxt "#32012"
@@ -113,6 +113,27 @@ msgstr ""
 
 msgctxt "#32029"
 msgid "IPTV Channel"
+msgstr ""
+
+# IPTV active list strings (32040-32049)
+msgctxt "#32040"
+msgid "CHOOSE IPTV LIST"
+msgstr ""
+
+msgctxt "#32041"
+msgid "CHANGE IPTV LIST"
+msgstr ""
+
+msgctxt "#32042"
+msgid "IPTV list set successfully"
+msgstr ""
+
+msgctxt "#32043"
+msgid "Content not found in your IPTV list"
+msgstr ""
+
+msgctxt "#32044"
+msgid "No IPTV list configured. Choose one first."
 msgstr ""
 
 msgctxt "#32023"
@@ -193,34 +214,34 @@ msgctxt "#32205"
 msgid "INTRO"
 msgstr ""
 
-msgctxt "#33000"
-msgid "Database"
-msgstr ""
-
-msgctxt "#33001"
-msgid "Enable automatic cleanup"
-msgstr ""
-
-msgctxt "#33002"
-msgid "Set days to delete the database"
-msgstr ""
-
-msgctxt "#33003"
-msgid "Delete database"
-msgstr ""
-
-msgctxt "#33004"
-msgid "Are you sure you want to delete the database?"
-msgstr ""
-
-msgctxt "#33005"
-msgid "Database and thumb cache deleted successfully."
-msgstr ""
-
 msgctxt "#32120"
 msgid "Autoplay"
 msgstr ""
 
 msgctxt "#32121"
 msgid "kingIPTV auto play"
+msgstr ""
+
+msgctxt "#32130"
+msgid "Maintenance"
+msgstr ""
+
+msgctxt "#32131"
+msgid "Clear Kodi video cache (fixes duplicated watched items)"
+msgstr ""
+
+msgctxt "#32132"
+msgid "Clear Kodi video cache?"
+msgstr ""
+
+msgctxt "#32133"
+msgid "This will delete Kodi's video library database (watched status and resume points for ALL sources/addons, not just kingIPTV) and the Thumbnails cache. After clearing it, you need to close and reopen Kodi for the database to be recreated. This cannot be undone. Continue?"
+msgstr ""
+
+msgctxt "#32134"
+msgid "Cache cleared. Close and reopen Kodi for the database to be recreated."
+msgstr ""
+
+msgctxt "#32135"
+msgid "Nothing was found to clear."
 msgstr ""

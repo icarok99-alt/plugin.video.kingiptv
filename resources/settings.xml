@@ -1,5 +1,8 @@
 <?xml version="1.0" encoding="utf-8" standalone="yes"?>
 <settings>
+    <category label="32041">
+        <setting label="32041" type="action" action="RunPlugin(plugin://plugin.video.kingiptv/select_list/)" option="close"/>
+    </category>
     <category label="32100">
         <setting id="upnext_enabled" type="bool" label="32101" default="true"/>
         <setting id="upnext_trigger_seconds" type="number" label="32102" default="30"/>
@@ -13,12 +16,10 @@
     <category label="32120">
         <setting id="autoplay_enabled" type="bool" label="32121" default="true"/>
     </category>
-    <category label="33000">
-        <setting id="db_auto_cleanup_enabled" type="bool" label="33001" default="false"/>
-        <setting id="db_cleanup_days" type="number" label="33002" default="7" enable="eq(-1,true)"/>
-        <setting id="db_manual_cleanup" type="action" label="33003" action="RunScript(special://home/addons/plugin.video.kingiptv/lib/db_manager.py,clear_all)"/>
-    </category>
     <category label="Proxy">
         <setting id="proxy_port" type="number" label="Porta do Proxy Local" default="9097"/>
+    </category>
+    <category label="32130">
+        <setting label="32131" type="action" action="RunScript(special://home/addons/plugin.video.kingiptv/lib/db_manager.py,clear_all)" option="close"/>
     </category>
 </settings>

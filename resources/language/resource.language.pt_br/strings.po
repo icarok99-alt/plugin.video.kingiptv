@@ -16,52 +16,52 @@ msgstr ""
 
 # General / Menu strings (32000-32099)
 msgctxt "#32000"
-msgid "IPTV Lists"
-msgstr "Listas IPTV"
+msgid "Live TV"
+msgstr "TV AO VIVO"
 
 msgctxt "#32001"
 msgid "Pluto Channels"
-msgstr "Canais Pluto"
+msgstr "PLUTO TV"
 
 msgctxt "#32002"
 msgid "Radios"
-msgstr "Rádios"
+msgstr "RÁDIOS"
 
 msgctxt "#32003"
 msgid "IMDB Movies"
-msgstr "IMDB Filmes"
+msgstr "IMDB FILMES"
 
 msgctxt "#32004"
 msgid "IMDB TV shows"
-msgstr "IMDB Séries"
+msgstr "IMDB SÉRIES"
 
 msgctxt "#32005"
 msgid "Settings"
-msgstr "Configurações"
+msgstr "CONFIGURAÇÕES"
 
 msgctxt "#32006"
 msgid "Search Movie"
-msgstr "Pesquisar Filme"
+msgstr "PESQUISAR FILME"
 
 msgctxt "#32007"
 msgid "Top 250 Movies"
-msgstr "Top 250 Filmes"
+msgstr "TOP 250 FILMES"
 
 msgctxt "#32008"
 msgid "Popular Movies"
-msgstr "Filmes Populares"
+msgstr "FILMES POPULARES"
 
 msgctxt "#32009"
 msgid "Search TV show"
-msgstr "Pesquisar Série"
+msgstr "PESQUISAR SÉRIE"
 
 msgctxt "#32010"
 msgid "Top 250 TV shows"
-msgstr "Top 250 Séries"
+msgstr "TOP 250 SÉRIES"
 
 msgctxt "#32011"
 msgid "Popular TV shows"
-msgstr "Séries Populares"
+msgstr "SÉRIES POPULARES"
 
 msgctxt "#32012"
 msgid "Next Page"
@@ -114,6 +114,27 @@ msgstr "Digite o nome da série"
 msgctxt "#32029"
 msgid "IPTV Channel"
 msgstr "Canal IPTV"
+
+# IPTV active list strings (32040-32049)
+msgctxt "#32040"
+msgid "Choose IPTV List"
+msgstr "ESCOLHER LISTA"
+
+msgctxt "#32041"
+msgid "Change IPTV List"
+msgstr "TROCAR LISTA"
+
+msgctxt "#32042"
+msgid "IPTV list set successfully"
+msgstr "Lista IPTV definida com sucesso"
+
+msgctxt "#32043"
+msgid "Content not found in your IPTV list"
+msgstr "Stream Indisponível"
+
+msgctxt "#32044"
+msgid "No IPTV list configured. Choose one first."
+msgstr "Nenhuma lista IPTV configurada. Escolha uma primeiro."
 
 msgctxt "#32023"
 msgid "Updating..."
@@ -193,30 +214,6 @@ msgctxt "#32205"
 msgid "INTRO"
 msgstr "Pular abertura"
 
-msgctxt "#33000"
-msgid "Database"
-msgstr "Banco de dados"
-
-msgctxt "#33001"
-msgid "Enable automatic cleanup"
-msgstr "Ativar limpeza automática"
-
-msgctxt "#33002"
-msgid "Set days to delete the database"
-msgstr "Defina os dias para excluir o banco de dados."
-
-msgctxt "#33003"
-msgid "Delete database"
-msgstr "Excluir banco de dados"
-
-msgctxt "#33004"
-msgid "Are you sure you want to delete the database?"
-msgstr "Tem certeza de que deseja excluir o banco de dados?"
-
-msgctxt "#33005"
-msgid "Database and thumb cache deleted successfully."
-msgstr "Banco de dados e cache de thumbs excluídos com sucesso."
-
 msgctxt "#32120"
 msgid "Autoplay"
 msgstr "Reprodução automática"
@@ -224,3 +221,27 @@ msgstr "Reprodução automática"
 msgctxt "#32121"
 msgid "kingIPTV auto play"
 msgstr "kingIPTV reprodução automática"
+
+msgctxt "#32130"
+msgid "Maintenance"
+msgstr "Manutenção"
+
+msgctxt "#32131"
+msgid "Clear Kodi video cache (fixes duplicated watched items)"
+msgstr "Limpar cache de vídeos do Kodi (corrige duplicidade de itens assistidos)"
+
+msgctxt "#32132"
+msgid "Clear Kodi video cache?"
+msgstr "Limpar cache de vídeos do Kodi?"
+
+msgctxt "#32133"
+msgid "This will delete Kodi's video library database (watched status and resume points for ALL sources/addons, not just kingIPTV) and the Thumbnails cache. After clearing it, you need to close and reopen Kodi for the database to be recreated. This cannot be undone. Continue?"
+msgstr "Isso vai apagar o banco de dados de vídeos do Kodi (status de assistido e progresso de TODAS as fontes/addons, não só do kingIPTV) e o cache de miniaturas (Thumbnails). Depois de limpar, é preciso fechar e abrir o Kodi novamente para o banco de dados ser recriado. Esta ação não pode ser desfeita. Deseja continuar?"
+
+msgctxt "#32134"
+msgid "Cache cleared. Close and reopen Kodi for the database to be recreated."
+msgstr "Cache limpo. Feche e abra o Kodi novamente para o banco de dados ser recriado."
+
+msgctxt "#32135"
+msgid "Nothing was found to clear."
+msgstr "Nada foi encontrado para limpar."
