@@ -1,3 +1,5 @@
+# -*- coding: utf-8 -*-
+
 try:
     from lib.helper import *
 except Exception:
