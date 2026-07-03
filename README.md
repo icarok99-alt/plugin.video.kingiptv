@@ -11,6 +11,14 @@ O **King IPTV** é um add-on completo para o **Kodi**, focado em entretenimento 
 
 O add-on oferece um vasto catálogo de filmes e séries sob demanda, além de uma ampla seleção de canais de TV ao vivo e integração direta com os canais gratuitos e legais do Pluto TV.
 
+### 🔄 Como funciona a Lista IPTV
+
+Na primeira vez que você abrir o add-on, será solicitado que escolha sua **Lista IPTV** (entre as listas disponíveis). A partir daí, essa lista fica salva como a **lista ativa** e o menu principal passa a navegar direto dentro dela:
+
+* **TV ao Vivo** → mostra direto as categorias de canais da sua lista (sem pedir para escolher a lista de novo)
+* **IMDB Filmes / IMDB Séries** → você pesquisa ou navega pelo catálogo do IMDB, e o add-on busca automaticamente o filme/episódio correspondente dentro da sua lista IPTV (por similaridade de título), sem depender de nenhuma API externa de VOD
+* Para trocar de lista a qualquer momento, use a opção **Trocar Lista IPTV** no menu principal ou em Configurações
+
 > ✅ Recomendação: a melhor forma de instalar e manter o King IPTV sempre atualizado é através do Repositório OnePlay, que gerencia automaticamente dependências e novas versões.
 
 ---
