@@ -1,9 +1,6 @@
 <?xml version="1.0" encoding="utf-8" standalone="yes"?>
 <settings>
-    <category label="32041">
-        <setting label="32041" type="action" action="RunPlugin(plugin://plugin.video.kingiptv/select_list/)" option="close"/>
-    </category>
-    <category label="32100">
+<category label="32100">
         <setting id="upnext_enabled" type="bool" label="32101" default="true"/>
         <setting id="upnext_trigger_seconds" type="number" label="32102" default="30"/>
         <setting id="upnext_countdown_seconds" type="number" label="32103" default="10"/>
@@ -17,7 +14,7 @@
         <setting id="autoplay_enabled" type="bool" label="32121" default="true"/>
     </category>
     <category label="Proxy">
-        <setting id="proxy_port" type="number" label="Porta do Proxy Local" default="9097"/>
+        <setting id="proxy_port" type="number" label="Porta do Proxy Local" default="57845"/>
     </category>
     <category label="32130">
         <setting label="32131" type="action" action="RunScript(special://home/addons/plugin.video.kingiptv/lib/db_manager.py,clear_all)" option="close"/>
