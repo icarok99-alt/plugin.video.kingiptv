@@ -33,7 +33,7 @@ def log(msg, level=None):
             print("[XC Pro Proxy] {}".format(msg))
     except Exception:
         pass
-PROXY_PORT = 9097
+PROXY_PORT = 57845
 CACHE_DURATION_SECONDS = 5
 CACHE_MAX_CHUNKS = 250
 MAX_RETRIES = 7
