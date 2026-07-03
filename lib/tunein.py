@@ -1,3 +1,5 @@
+# -*- coding: utf-8 -*-
+
 from lib.helper import *
 import requests
 
