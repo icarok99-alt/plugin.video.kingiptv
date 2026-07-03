@@ -1,3 +1,5 @@
+# -*- coding: utf-8 -*-
+
 try:
     from kodi_six import xbmc as xbmc_, xbmcgui as xbmcgui_, xbmcplugin as xbmcplugin_, xbmcaddon as xbmcaddon_, xbmcvfs as xbmcvfs_
 except:
