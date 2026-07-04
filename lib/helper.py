@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+
 try:
     from kodi_six import xbmc as xbmc_, xbmcgui as xbmcgui_, xbmcplugin as xbmcplugin_, xbmcaddon as xbmcaddon_, xbmcvfs as xbmcvfs_
 except:
@@ -18,7 +19,6 @@ except ImportError:
     import simplejson as json_
 from bs4 import BeautifulSoup as bfs
 import base64
-
 six = six_
 requests = rq
 json = json_
@@ -40,11 +40,9 @@ quote_plus = quote_plus_
 unquote_plus = unquote_plus_
 urlencode = urlencode_
 os = os_
-
 if six.PY2:
     reload(sys)
     sys.setdefaultencoding('utf-8')
-
 try:
     class Progress_six:
         dp = xbmcgui.DialogProgress()
@@ -60,7 +58,6 @@ try:
                 cls.dp.update(int(update), str(heading))
             else:
                 cls.dp.update(int(update), str(heading),'', '')
-
     class ProgressBG_six:
         dp = xbmcgui.DialogProgressBG()
         @classmethod
@@ -77,7 +74,6 @@ try:
                 cls.dp.update(int(update), str(heading),'', '')
 except:
     pass
-
 try:
     addon = xbmcaddon.Addon()
     addonName = addon.getAddonInfo('name')
@@ -104,7 +100,7 @@ def yesno(heading="",message="",nolabel="Nao",yeslabel="Sim"):
         q = dialog_.yesno(heading=heading, line1=message, nolabel=nolabel, yeslabel=yeslabel)
     else:
         q = dialog_.yesno(heading=heading, message=message, nolabel=nolabel, yeslabel=yeslabel)
-    return q        
+    return q
 
 def format_resume_time(seconds):
     seconds = int(seconds)
@@ -184,7 +180,7 @@ def dialog(msg):
 
 def progress_six():
     dp = Progress_six()
-    return dp 
+    return dp
 
 def progressBG_six():
     pDialog = ProgressBG_six()
@@ -192,7 +188,7 @@ def progressBG_six():
 
 def select(name,items):
     op = dialog_.select(name, items)
-    return op 
+    return op
 
 def log(txt):
     try:
@@ -217,10 +213,10 @@ def get_search_string(heading='', message=''):
     keyboard.doModal()
     if keyboard.isConfirmed():
         search_string = to_unicode(keyboard.getText())
-    return search_string 
+    return search_string
 
 def input_text(heading='Put text'):
-    vq = get_search_string(heading=heading, message="")        
+    vq = get_search_string(heading=heading, message="")
     if ( not vq ): return False
     return vq
 
@@ -238,18 +234,18 @@ def infoDialog(message, iconimage='', time=3000, sound=False):
 
 def notify(msg):
     try:
-        infoDialog(msg,iconimage='INFO') 
+        infoDialog(msg,iconimage='INFO')
     except:
         pass
 
-def addMenuItem(params={}, destiny=''):
+def addMenuItem(params={}, destiny='', exclude_from_url=None):
     try:
         destiny = destiny.split('/')[1]
     except:
         pass
     name = params.get('name', '')
     description = params.get("description", "")
-    originaltitle = params.get("originaltitle", "")        
+    originaltitle = params.get("originaltitle", "")
     try:
         params.update({'name': string_utf8(name)})
     except:
@@ -261,9 +257,12 @@ def addMenuItem(params={}, destiny=''):
     try:
         params.update({'originaltitle': string_utf8(originaltitle)})
     except:
-        pass               
-    u = 'plugin://%s/%s/%s'%(base.split("/")[2],destiny,urlencode(params))
-    
+        pass
+    exclude_keys = {'playcount'}
+    if exclude_from_url:
+        exclude_keys.update(exclude_from_url)
+    url_params = {k: v for k, v in params.items() if k not in exclude_keys}
+    u = 'plugin://%s/%s/%s'%(base.split("/")[2],destiny,urlencode(url_params))
     iconimage = params.get("iconimage", "")
     fanart = params.get("fanart", "")
     codec = params.get("codec", "")
@@ -342,7 +341,6 @@ def addMenuItem(params={}, destiny=''):
             info.setPlaycount(int(playcount))
         else:
             li.setInfo('video', {'playcount': int(playcount)})
-
     season_num = params.get('season_num', season)
     episode_num = params.get('episode_num', episode)
     if season_num:
@@ -358,7 +356,7 @@ def addMenuItem(params={}, destiny=''):
     is_playable = bool(playable and playable != 'false')
     is_folder = not is_playable
     if is_playable:
-        li.setProperty('IsPlayable', 'true')        
+        li.setProperty('IsPlayable', 'true')
     if fanart:
         li.setProperty('fanart_image', fanart)
     else:
@@ -370,7 +368,7 @@ def play_video(params):
     url = params.get('url', '')
     sub = params.get('sub', '')
     description = params.get("description", "")
-    originaltitle = params.get("originaltitle", "") 
+    originaltitle = params.get("originaltitle", "")
     iconimage = params.get("iconimage", "")
     fanart = params.get("fanart", "")
     codec = params.get("codec", "")
@@ -449,30 +447,32 @@ def play_video(params):
     if fanart:
         li.setProperty('fanart_image', fanart)
     else:
-        li.setProperty('fanart_image', addonFanart)                
+        li.setProperty('fanart_image', addonFanart)
     li.setPath(url)
     if sub:
-        li.setSubtitles([sub])               
+        li.setSubtitles([sub])
     if playable and not playable == 'false':
         xbmcplugin.setResolvedUrl(int(sys.argv[1]), True, li)
     else:
         xbmc.Player().play(item=url, listitem=li)
 
 def setcontent(name):
-    xbmcplugin.setContent(handle, name)  
+    xbmcplugin.setContent(handle, name)
 
 def end():
     xbmcplugin.endOfDirectory(handle)
 
 def setview(name):
     views = {
-        'List': 'list',
-        'Poster': 'poster',
-        'Shift': 'shift',
-        'InfoWall': 'infowall',
-        'WideList': 'widelist',
-        'Wall': 'wall',
-        'Fanart': 'fanart'
+        'List': 50,
+        'Poster': 51,
+        'IconWall': 52,
+        'Shift': 53,
+        'InfoWall': 54,
+        'WideList': 55,
+        'Wall': 500,
+        'Banner': 501,
+        'Fanart': 502,
     }
-    view_name = views.get(name, 'list')
-    xbmc.executebuiltin(f'SetViewMode({view_name})')
+    view_id = views.get(name, 50)
+    xbmc.executebuiltin(f'Container.SetViewMode({view_id})')

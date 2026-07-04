@@ -4,19 +4,14 @@ import re
 import json
 import html
 from urllib.parse import quote
-
 from bs4 import BeautifulSoup
-
 from waf.solver import solve
-
 UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36'
-
 
 def resize_poster(url, size='V1_QL100_UX1080'):
     if not url:
         return ''
     return re.sub(r'V1.*?(\.jpg)', size + r'\1', url)
-
 
 class IMDBScraper:
     def __init__(self, proxy: str = None):
@@ -29,7 +24,6 @@ class IMDBScraper:
         self.session = None
         self.token = None
         self._init_waf()
-
     def _init_waf(self):
         try:
             result, self.session = solve(self.base, UA, proxy=self.proxy)
@@ -41,17 +35,14 @@ class IMDBScraper:
             self.session = _req.Session()
             if self.proxy:
                 self.session.proxies = {'http': self.proxy, 'https': self.proxy}
-
     def _get(self, url: str) -> str:
         resp = self.session.get(url, headers=self.headers)
         if resp.status_code in (202, 403, 429):
             self._init_waf()
             resp = self.session.get(url, headers=self.headers)
         return resp.text
-
     def soup(self, html_text):
         return BeautifulSoup(html_text, 'html.parser')
-
     def _extract_next_data(self, html_text):
         match = re.search(
             r'<script id="__NEXT_DATA__" type="application/json">(.+?)</script>',
@@ -63,7 +54,6 @@ class IMDBScraper:
             return json.loads(match.group(1))
         except json.JSONDecodeError:
             return None
-
     def _parse_search_results(self, html_text, name_key: str):
         itens = []
         data = self._extract_next_data(html_text)
@@ -90,7 +80,6 @@ class IMDBScraper:
             page = f'{self.base}/pt/title/{imdb_id}/'
             itens.append((title, img, page, description, imdb_id, orig_title, year))
         return itens
-
     def search_series(self, search):
         itens = []
         try:
@@ -99,7 +88,6 @@ class IMDBScraper:
         except Exception:
             pass
         return itens
-
     def search_movies(self, search):
         itens = []
         try:
@@ -108,24 +96,18 @@ class IMDBScraper:
         except Exception:
             pass
         return itens
-
     def series_250(self, page=1, per_page=250):
         return self._chart_parser('/pt/chart/toptv/?ref_=chttvm_nv_menu', page, per_page, content_type='series')
-
     def series_popular(self, page=1, per_page=100):
         return self._chart_parser('/pt/chart/tvmeter/?ref_=chtmvm_nv_menu', page, per_page, content_type='series')
-
     def movies_250(self, page=1, per_page=250):
         return self._chart_parser('/pt/chart/top/?ref_=chtmvm_nv_menu', page, per_page, content_type='movie')
-
     def movies_popular(self, page=1, per_page=100):
         return self._chart_parser('/pt/chart/moviemeter/?ref_=chttp_nv_menu', page, per_page, content_type='movie')
-
     def _chart_parser(self, chart_path, page=1, per_page=100, content_type='movie'):
         itens = []
         try:
             html_text = self._get(self.base + chart_path)
-
             year_map = {}
             try:
                 next_data = self._extract_next_data(html_text)
@@ -146,20 +128,16 @@ class IMDBScraper:
                             year_map[nid] = year_val
             except Exception:
                 pass
-
             json_match = re.search(
                 r'<script type="application/ld\+json">(.+?)</script>',
                 html_text, re.DOTALL
             )
             if not json_match:
                 return itens
-
             dict_ = json.loads(json_match.group(1))
             all_items = []
-
             for i in dict_['itemListElement']:
                 data = i['item']
-
                 alt_title = data.get('alternateName', '')
                 alt_title = html.unescape(
                     str(alt_title.get('text', '') if isinstance(alt_title, dict) else alt_title).strip()
@@ -168,29 +146,23 @@ class IMDBScraper:
                 orig_name = html.unescape(
                     str(orig_name.get('text', '') if isinstance(orig_name, dict) else orig_name).strip()
                 )
-
                 display_name = alt_title if alt_title else orig_name
                 if not display_name:
                     continue
-
                 item_url = data['url']
                 description = html.unescape(data.get('description', ''))
                 image = resize_poster(data.get('image', ''))
                 if not image:
                     continue
-
                 imdb_id = 'tt' + re.findall(r'/tt(.*?)/', item_url)[0]
                 item_url = f'{self.base}/pt/title/{imdb_id}/'
                 year = year_map.get(imdb_id, '')
                 all_items.append((display_name, image, item_url, description, imdb_id, orig_name, year))
-
             start = (page - 1) * per_page
             itens = all_items[start:start + per_page]
-
         except Exception:
             pass
         return itens
-
     def imdb_seasons(self, url):
         itens = []
         try:
@@ -207,7 +179,6 @@ class IMDBScraper:
         except Exception:
             pass
         return itens
-
     def imdb_episodes(self, url):
         itens = []
         try:
