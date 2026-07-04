@@ -265,7 +265,7 @@ def channels_pluto():
         for name, desc, thumb, url in channels:
             addMenuItem({'name': name, 'description': desc, 'iconimage': thumb, 'url': url, 'playable': 'true'}, destiny='/play_pluto')
         end()
-        setview('List')
+        setview('WideList')
     else:
         notify(getString(32018))
 
