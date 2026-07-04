@@ -464,13 +464,15 @@ def end():
 
 def setview(name):
     views = {
-        'List': 'list',
-        'Poster': 'poster',
-        'Shift': 'shift',
-        'InfoWall': 'infowall',
-        'WideList': 'widelist',
-        'Wall': 'wall',
-        'Fanart': 'fanart'
+        'List': 50,
+        'Poster': 51,
+        'IconWall': 52,
+        'Shift': 53,
+        'InfoWall': 54,
+        'WideList': 55,
+        'Wall': 500,
+        'Banner': 501,
+        'Fanart': 502,
     }
-    view_name = views.get(name, 'list')
-    xbmc.executebuiltin(f'SetViewMode({view_name})')
+    view_id = views.get(name, 50)
+    xbmc.executebuiltin(f'Container.SetViewMode({view_id})')
