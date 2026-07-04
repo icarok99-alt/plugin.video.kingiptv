@@ -327,7 +327,7 @@ def imdb_movies():
     addMenuItem({'name': getString(32007), 'description': ''}, destiny='/imdb_movies_250')
     addMenuItem({'name': getString(32008), 'description': ''}, destiny='/imdb_movies_popular')
     end()
-    setview('List')
+    setview('WideList')
 
 @route('/imdb_series')
 def imdb_series():
@@ -335,7 +335,7 @@ def imdb_series():
     addMenuItem({'name': getString(32010), 'description': ''}, destiny='/imdb_series_250')
     addMenuItem({'name': getString(32011), 'description': ''}, destiny='/imdb_series_popular')
     end()
-    setview('List')
+    setview('WideList')
 
 @route('/find_movies')
 def find_movies():
@@ -562,7 +562,7 @@ def open_imdb_episodes(param):
                 exclude_from_url=['name', 'description', 'iconimage', 'fanart', 'episode_title'],
             )
         end()
-        setview('List')
+        setview('InfoWall')
 
 def find_movie_in_list(active, movie_name, original_name, year):
     dns = active['dns']
