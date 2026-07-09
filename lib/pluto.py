@@ -1,9 +1,6 @@
 # -*- coding: utf-8 -*-
-try:
-    from lib.helper import *
-except Exception:
-    from helper import *
 
+from lib.helper import *
 import uuid
 import re
 from datetime import datetime, timedelta, timezone
