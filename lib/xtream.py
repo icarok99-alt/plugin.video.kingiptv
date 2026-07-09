@@ -332,10 +332,11 @@ def epg_lookup_current_next(programs):
     now = int(time.time())
     current = None
     nextp = None
+    grace = 120
     for idx, program in enumerate(programs or []):
         start = int(program.get('start') or 0)
         end = int(program.get('end') or 0)
-        if start and end and start <= now < end:
+        if start and end and (start - grace) <= now < end:
             current = program
             if idx + 1 < len(programs):
                 nextp = programs[idx + 1]
@@ -1118,6 +1119,81 @@ class API:
         except Exception as e:
             log_iptv_problem(url, 'Erro ao abrir canais: {}'.format(e))
         return itens
+
+    def channels_open_epg(self, url):
+        result = []
+        _ensure_epg_background(self.dns, self.username, self.password)
+        if 'player_api.php' in url and 'action=get_live_streams' in url:
+            json_data = self.http(url, 'json_url')
+            if not json_data:
+                return result
+            for stream in json_data:
+                try:
+                    name = clean_channel_name(stream.get('name', '') or '')
+                    stream_id = stream.get('stream_id')
+                    if not stream_id:
+                        continue
+                    url_ = '{}{}.m3u8'.format(self.play_url, stream_id)
+                    thumb = clean_text(stream.get('stream_icon', ''))
+                    programs = []
+                    epg_channel_id = stream.get('epg_channel_id') or ''
+                    if epg_channel_id:
+                        programs = get_epg_programs(epg_channel_id, self.dns, limit=48)
+                    result.append({'name': name, 'icon': thumb, 'url': url_, 'programs': programs})
+                except Exception:
+                    continue
+            if result:
+                result = sorted(result, key=lambda x: x['name'].lower())
+            return result
+
+        try:
+            chan_id = url.split('cat_id=')[1].split('&')[0]
+        except Exception:
+            try:
+                chan_id = url.split('category_id=')[1].split('&')[0]
+            except Exception:
+                chan_id = ''
+        if not chan_id:
+            return result
+        xml_data = self.http(url)
+        if not xml_data:
+            return result
+        try:
+            url_json = '{}&action=get_live_streams&category_id={}'.format(self.player_api, chan_id)
+            json_data = self.http(url_json, 'json_url')
+            root = ET.fromstring(xml_data)
+            channels = root.findall('channel')
+            if not channels:
+                return result
+            for i, channel in enumerate(channels):
+                try:
+                    title_elem = channel.find('title')
+                    if title_elem is None:
+                        continue
+                    name = clean_channel_name(self.b64(title_elem.text))
+                    stream_id = self.channel_id(json_data, i)
+                    if not stream_id:
+                        continue
+                    url_ = '{}{}.m3u8'.format(self.play_url, stream_id)
+                    try:
+                        di = channel.find('desc_image')
+                        thumb = di.text.replace('<![CDATA[ ', '').replace(' ]]>', '') if di is not None else ''
+                    except Exception:
+                        thumb = ''
+                    programs = []
+                    if json_data and i < len(json_data):
+                        stream = json_data[i]
+                        epg_channel_id = stream.get('epg_channel_id') or ''
+                        if epg_channel_id:
+                            programs = get_epg_programs(epg_channel_id, self.dns, limit=48)
+                    result.append({'name': name, 'icon': thumb, 'url': url_, 'programs': programs})
+                except Exception:
+                    continue
+            if result:
+                result = sorted(result, key=lambda x: x['name'].lower())
+        except Exception as e:
+            log_iptv_problem(url, 'Erro ao abrir guia de canais: {}'.format(e))
+        return result
     def series_cat(self):
         itens = []
         url_ser = '{}&action=get_series_categories'.format(self.player_api)

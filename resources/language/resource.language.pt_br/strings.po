@@ -245,3 +245,12 @@ msgstr "Cache limpo. Feche e abra o Kodi novamente para o banco de dados ser rec
 msgctxt "#32135"
 msgid "Nothing was found to clear."
 msgstr "Nada foi encontrado para limpar."
+
+msgctxt "#32136"
+msgid "PROGRAM GUIDE"
+msgstr "GUIA DE PROGRAMAÇÃO"
+
+
+msgctxt "#32137"
+msgid "PLEASE WAIT WHILE PLAYBACK STARTS..."
+msgstr "Aguarde enquanto a reprodução inicia..."

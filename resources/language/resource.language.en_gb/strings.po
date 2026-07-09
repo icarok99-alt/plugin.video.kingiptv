@@ -245,3 +245,12 @@ msgstr ""
 msgctxt "#32135"
 msgid "Nothing was found to clear."
 msgstr ""
+
+msgctxt "#32136"
+msgid "PROGRAM GUIDE"
+msgstr ""
+
+
+msgctxt "#32137"
+msgid "PLEASE WAIT WHILE PLAYBACK STARTS..."
+msgstr ""

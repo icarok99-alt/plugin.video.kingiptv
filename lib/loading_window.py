@@ -158,7 +158,7 @@ class LoadingManager:
                 window.dismiss()
             except Exception:
                 pass
-    def show(self, fanart_path=None):
+    def show(self, fanart_path=None, xml_filename='DialogLoadingKing.xml'):
         with self._lock:
             old_window = self._window
             self._window = None
@@ -173,7 +173,7 @@ class LoadingManager:
         xbmcgui.Window(10000).setProperty('loading.fanart', fanart)
         self._start_busy_suppressor()
         new_window = LoadingWindow(
-            'DialogLoadingKing.xml', addon_path, 'Default', '1080i'
+            xml_filename, addon_path, 'Default', '1080i'
         )
         new_window.show()
         xbmc.sleep(80)

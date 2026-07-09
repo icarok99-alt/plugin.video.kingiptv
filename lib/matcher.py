@@ -12,10 +12,6 @@ _NOISE_WORDS = {
     'temporada', 'completa', 'serie', 'series',
 }
 _YEAR_RE = re.compile(r'\b((19|20)\d{2})\b')
-# Palavras "vazias" (artigos, preposições, conjunções) que não devem contar
-# como sinal de semelhança entre títulos. Sem isso, títulos totalmente
-# diferentes como "Mestres do Universo" e "Mestres do Assalto" ganham score
-# alto só por compartilharem "mestres" + "do".
 _STOPWORDS = {
     'a', 'o', 'as', 'os', 'um', 'uma', 'uns', 'umas',
     'de', 'do', 'da', 'dos', 'das', 'em', 'no', 'na', 'nos', 'nas',
@@ -61,9 +57,6 @@ def title_similarity(a, b):
         return 1.0
     ta = na.split()
     tb = nb.split()
-    # Remove stopwords antes de medir semelhança, senão palavras como "do"/
-    # "de"/"the" contam como "match" e mascaram títulos diferentes que só
-    # coincidem numa palavra comum + uma preposição.
     fa = [w for w in ta if w not in _STOPWORDS]
     fb = [w for w in tb if w not in _STOPWORDS]
     if fa and fb:
@@ -115,13 +108,8 @@ def best_title_match(candidates, name_key, titles, year=None,
             if cand_year:
                 year_matches = abs(cand_year - target_year) <= year_tolerance
             else:
-                # candidato sem ano conhecido: não zera por ano, mas passa a
-                # exigir um título muito mais forte (unknown_year_min_score)
                 required = unknown_year_min_score
                 year_matches = True
-            # O ano nunca pode resgatar um título fraco: o bônus só é somado
-            # se o título já bateu sozinho (raw_score >= required). Se o
-            # título OU o ano não baterem, zera na hora.
             title_matches = raw_score >= required
             if title_matches and year_matches:
                 score = min(1.0, raw_score + year_bonus) if cand_year else raw_score

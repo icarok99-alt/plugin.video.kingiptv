@@ -8,6 +8,7 @@ import threading
 from lib.helper import *
 import inputstreamhelper
 from lib import xtream, tunein, pluto, imdb, matcher, list_manager
+from lib.epg_dialog import open_epg
 from lib.proxy import UnifiedServer, PROXY_PORT
 from lib.db_manager import get_db
 from lib.loading_window import loading_manager
@@ -132,6 +133,7 @@ def index_iptv():
     active = list_manager.get_active_list()
     addMenuItem({'name': TITULO, 'description': ''}, destiny='')
     if active:
+        xtream._ensure_epg_background(active['dns'], active['username'], active['password'])
         addMenuItem({'name': getString(32000), 'description': ''}, destiny='/live_categories')
         addMenuItem({'name': getString(32001), 'description': ''}, destiny='/channels_pluto')
         addMenuItem({'name': getString(32002), 'description': ''}, destiny='/radios')
@@ -174,6 +176,7 @@ def prompt_select_list():
     list_manager.set_active_list(dns, username, password, label)
     notify(getString(32042))
     xtream.refresh_vod_catalogs_background(dns, username, password)
+    xtream._ensure_epg_background(dns, username, password)
 
 @route('/')
 def index():
@@ -223,22 +226,59 @@ def live_categories():
                 arquivo.write(url_problem)
         notify(getString(32014))
 
+def _build_iptv_play_item(name, description, iconimage, url):
+    proxy_url = 'http://127.0.0.1:{}/?url={}'.format(start_proxy_if_needed(), quote_plus(url))
+    play_item = xbmcgui.ListItem(path=proxy_url)
+    play_item.setContentLookup(False)
+    play_item.setProperty('IsPlayable', 'true')
+    play_item.setArt({"icon": iconimage or "DefaultVideo.png", "thumb": iconimage or "DefaultVideo.png"})
+    play_item.setMimeType("application/vnd.apple.mpegurl")
+    info_tag = play_item.getVideoInfoTag()
+    info_tag.setTitle(name)
+    info_tag.setPlot(description)
+    info_tag.setMediaType('video')
+    return proxy_url, play_item
+
+def _build_pluto_play_item(name, description, iconimage, url):
+    if not url:
+        return None, None
+    helper = inputstreamhelper.Helper('hls')
+    if not helper.check_inputstream():
+        return None, None
+    headers = url.split('|')[1] if '|' in url else ''
+    clean_url = url.split('|')[0] if '|' in url else url
+    li = xbmcgui.ListItem(path=clean_url)
+    li.setProperty('IsPlayable', 'true')
+    li.setProperty('inputstream', helper.inputstream_addon)
+    li.setProperty('inputstream.adaptive.manifest_type', 'hls')
+    li.setProperty('inputstream.adaptive.stream_headers', headers or 'User-Agent=Mozilla/5.0')
+    li.setProperty('inputstream.adaptive.manifest_headers', headers or 'User-Agent=Mozilla/5.0')
+    li.setMimeType('application/x-mpegURL')
+    li.setProperty('inputstream.adaptive.live_delay', '0')
+    li.setArt({'icon': iconimage or 'DefaultVideo.png', 'thumb': iconimage or 'DefaultVideo.png'})
+    tag = li.getVideoInfoTag()
+    tag.setTitle(name)
+    tag.setPlot(description)
+    tag.setMediaType('video')
+    return clean_url, li
+
 @route('/open_channels')
 def open_channels(param):
     dns = param['dns']
     username = param['username']
     password = param['password']
     url = param['url']
-    open_ = xtream.API(dns, username, password).channels_open(url)
-    if open_:
-        setcontent('videos')
-        for i in open_:
-            name, link, thumb, desc = i
-            addMenuItem({'name': name, 'description': desc, 'iconimage': thumb, 'url': link, 'playable': 'true'}, destiny='/play_iptv')
-        end()
-        setview('WideList')
-    else:
+    channels = xtream.API(dns, username, password).channels_open_epg(url)
+    if not channels:
         notify(getString(32015))
+        return
+
+    xbmcplugin.endOfDirectory(handle, succeeded=False, updateListing=False, cacheToDisc=False)
+
+    def _build(channel):
+        return _build_iptv_play_item(channel['name'], '', channel.get('icon', ''), channel.get('url', ''))
+
+    open_epg(header=getString(32000), channels=channels, build_listitem=_build)
 
 @route('/play_iptv')
 def play_iptv(param):
@@ -246,28 +286,22 @@ def play_iptv(param):
     description = param.get('description', '')
     iconimage = param.get('iconimage', '')
     url = param.get('url', '')
-    proxy_url = 'http://127.0.0.1:{}/?url={}'.format(start_proxy_if_needed(), quote_plus(url))
-    play_item = xbmcgui.ListItem(path=proxy_url)
-    play_item.setContentLookup(False)
-    play_item.setArt({"icon": iconimage or "DefaultVideo.png", "thumb": iconimage or "DefaultVideo.png"})
-    play_item.setMimeType("application/vnd.apple.mpegurl")
-    info_tag = play_item.getVideoInfoTag()
-    info_tag.setTitle(name)
-    info_tag.setPlot(description)
-    info_tag.setMediaType('video')
+    _proxy_url, play_item = _build_iptv_play_item(name, description, iconimage, url)
     xbmcplugin.setResolvedUrl(int(sys.argv[1]), True, play_item)
 
 @route('/channels_pluto')
 def channels_pluto():
-    channels = pluto.playlist_pluto()
-    if channels:
-        setcontent('videos')
-        for name, desc, thumb, url in channels:
-            addMenuItem({'name': name, 'description': desc, 'iconimage': thumb, 'url': url, 'playable': 'true'}, destiny='/play_pluto')
-        end()
-        setview('WideList')
-    else:
+    channels = pluto.playlist_pluto_epg()
+    if not channels:
         notify(getString(32018))
+        return
+
+    xbmcplugin.endOfDirectory(handle, succeeded=False, updateListing=False, cacheToDisc=False)
+
+    def _build(channel):
+        return _build_pluto_play_item(channel['name'], '', channel.get('icon', ''), channel.get('url', ''))
+
+    open_epg(header=getString(32001), channels=channels, build_listitem=_build)
 
 @route('/play_pluto')
 def play_pluto(param):
@@ -275,27 +309,10 @@ def play_pluto(param):
     name = param.get('name', '')
     iconimage = param.get('iconimage', '')
     desc = param.get('description', '')
-    if not url:
+    clean_url, li = _build_pluto_play_item(name, desc, iconimage, url)
+    if not clean_url:
         notify(getString(32016))
         return
-    helper = inputstreamhelper.Helper('hls')
-    if not helper.check_inputstream():
-        return
-    headers = url.split('|')[1] if '|' in url else ''
-    url = url.split('|')[0] if '|' in url else url
-    li = xbmcgui.ListItem(path=url)
-    li.setProperty('inputstream', helper.inputstream_addon)
-    li.setProperty('inputstream.adaptive.manifest_type', 'hls')
-    li.setProperty('inputstream.adaptive.stream_headers', headers or 'User-Agent=Mozilla/5.0')
-    li.setProperty('inputstream.adaptive.manifest_headers', headers or 'User-Agent=Mozilla/5.0')
-    li.setMimeType('application/x-mpegURL')
-    li.setProperty('inputstream.adaptive.live_delay', '0')
-    li.setProperty('inputstream.adaptive.manifest_update_parameter', 'full')
-    li.setArt({'icon': iconimage or 'DefaultVideo.png', 'thumb': iconimage or 'DefaultVideo.png'})
-    tag = li.getVideoInfoTag()
-    tag.setTitle(name)
-    tag.setPlot(desc)
-    tag.setMediaType('video')
     xbmcplugin.setResolvedUrl(int(sys.argv[1]), True, li)
 
 @route('/radios')
