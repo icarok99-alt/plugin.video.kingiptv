@@ -1,14 +1,4 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!--
-    DialogLoadingLive.xml - Tela de carregamento usada ao iniciar a
-    reproducao de um canal (TV AO VIVO / PLUTO TV).
-
-    Portado de DialogLoadingKing.xml: mesma estrutura (fanart, overlay
-    escuro, logo, barra de progresso animada), com a unica diferenca
-    sendo o texto - aqui e sempre uma unica mensagem fixa ("Aguarde
-    enquanto a reproducao inicia..."), sem a logica de fase1/fase2 do
-    loading original (que é usada pra resolucao de link de filmes/series).
--->
 <window>
     <defaultcontrol>-</defaultcontrol>
     <allowoverlay>no</allowoverlay>

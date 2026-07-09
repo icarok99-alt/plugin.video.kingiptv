@@ -1,30 +1,11 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!--
-    DialogEPG.xml - Guia de Programacao (TV AO VIVO / PLUTO TV)
-
-    Janela reutilizavel para as duas secoes do addon (Live TV / Xtream
-    e Pluto TV). O título exibido na barra superior é controlado pela
-    propriedade "epg.header" (ex.: "TV AO VIVO" ou "PLUTO TV"),
-    definida pelo Python antes de abrir o diálogo (ver lib/epg_dialog.py).
-
-    Regras de design seguidas:
-      - Nenhum ícone/emblema de coroa foi usado na barra inferior de
-        atalhos (apenas ícones neutros: OK, lista, setas, voltar).
-      - Nenhuma coroa e nenhum nome de categoria/gênero aparece nas
-        linhas da lista de canais (painel esquerdo do EPG). Cada linha
-        mostra apenas: logo do canal, nome do canal, programa atual e
-        uma mini barra de progresso.
-      - Nenhum emoji é usado em nenhum label; todos os ícones são
-        texturas PNG reais (icon_*.png / epg_*.png).
--->
 <window>
     <onload>SetProperty(epg.active,true)</onload>
     <onunload>ClearProperty(epg.active)</onunload>
 
     <controls>
 
-        <!-- ============ FUNDO ============ -->
-        <control type="image">
+                <control type="image">
             <posx>0</posx>
             <posy>0</posy>
             <width>1920</width>
@@ -41,8 +22,7 @@
             <texture>epg_bg_gradient.png</texture>
         </control>
 
-        <!-- ============ BARRA SUPERIOR ============ -->
-        <control type="group">
+                <control type="group">
             <posx>0</posx>
             <posy>0</posy>
 
@@ -84,7 +64,7 @@
                 <aligny>center</aligny>
                 <font>font15_title</font>
                 <textcolor>FFF3B73B</textcolor>
-                <label>$INFO[Window(Home).Property(epg.header)]  |  GUIA DE PROGRAMAÇÃO</label>
+                <label>$INFO[Window(Home).Property(epg.header)]  |  $ADDON[plugin.video.kingiptv 32136]</label>
             </control>
 
             <control type="label">
@@ -112,16 +92,7 @@
             </control>
         </control>
 
-        <!-- ============ PAINEL ESQUERDO: LISTA DE CANAIS ============ -->
-        <!--
-            Contrato de dados por item (ListItem):
-              Label              -> nome do canal
-              Icon / Thumb       -> logo do canal
-              Property(current)  -> nome do programa atual ("AGORA")
-              Property(percent)  -> 0-100, progresso do programa atual
-              Property(live)     -> "true" se há programa em exibição
-        -->
-        <control type="group">
+                        <control type="group">
             <posx>40</posx>
             <posy>118</posy>
 
@@ -232,8 +203,7 @@
             </control>
         </control>
 
-        <!-- ============ PAINEL DIREITO: DETALHES DO PROGRAMA ============ -->
-        <control type="group">
+                <control type="group">
             <posx>968</posx>
             <posy>118</posy>
 
@@ -262,7 +232,7 @@
                 <height>36</height>
                 <font>font13</font>
                 <textcolor>FFF3B73B</textcolor>
-                <label>AGORA: $INFO[Window(Home).Property(epg.current.title)]</label>
+                <label>$ADDON[plugin.video.kingiptv 32143]: $INFO[Window(Home).Property(epg.current.title)]</label>
                 <visible>!String.IsEmpty(Window(Home).Property(epg.current.title))</visible>
             </control>
 
@@ -285,7 +255,7 @@
                 <align>right</align>
                 <font>font12</font>
                 <textcolor>FF9A9A9A</textcolor>
-                <label>Restam $INFO[Window(Home).Property(epg.current.remaining)] min</label>
+                <label>$ADDON[plugin.video.kingiptv 32145] $INFO[Window(Home).Property(epg.current.remaining)] $ADDON[plugin.video.kingiptv 32146]</label>
                 <visible>!String.IsEmpty(Window(Home).Property(epg.current.remaining))</visible>
             </control>
 
@@ -334,7 +304,7 @@
                 <height>36</height>
                 <font>font13</font>
                 <textcolor>FFF3B73B</textcolor>
-                <label>PRÓXIMOS PROGRAMAS</label>
+                <label>$ADDON[plugin.video.kingiptv 32144]</label>
             </control>
 
             <control type="list" id="3002">
@@ -408,8 +378,7 @@
             </control>
         </control>
 
-        <!-- ============ BARRA INFERIOR: ATALHOS (sem coroa) ============ -->
-        <control type="group">
+                <control type="group">
             <posx>0</posx>
             <posy>992</posy>
 
@@ -439,7 +408,7 @@
                     <aligny>center</aligny>
                     <font>font12</font>
                     <textcolor>FFE6E6E6</textcolor>
-                    <label>ASSISTIR</label>
+                    <label>$ADDON[plugin.video.kingiptv 32138]</label>
                 </control>
             </control>
 
@@ -468,7 +437,7 @@
                     <aligny>center</aligny>
                     <font>font12</font>
                     <textcolor>FFE6E6E6</textcolor>
-                    <label>CIMA/BAIXO: NAVEGAR</label>
+                    <label>$ADDON[plugin.video.kingiptv 32139]</label>
                 </control>
             </control>
 
@@ -497,7 +466,7 @@
                     <aligny>center</aligny>
                     <font>font12</font>
                     <textcolor>FFE6E6E6</textcolor>
-                    <label>ESQ/DIR: MUDAR PAINEL</label>
+                    <label>$ADDON[plugin.video.kingiptv 32140]</label>
                 </control>
             </control>
 
@@ -519,7 +488,7 @@
                     <aligny>center</aligny>
                     <font>font12</font>
                     <textcolor>FFE6E6E6</textcolor>
-                    <label>VOLTAR: FECHAR</label>
+                    <label>$ADDON[plugin.video.kingiptv 32141]</label>
                 </control>
             </control>
         </control>

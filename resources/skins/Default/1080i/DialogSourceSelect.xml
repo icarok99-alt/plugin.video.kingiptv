@@ -105,7 +105,7 @@
             <posx>0</posx><posy>740</posy><width>1920</width><height>25</height>
             <align>center</align><aligny>center</aligny>
             <font>font15</font><textcolor>90FFFFFF</textcolor>
-            <label>Pressione OK para selecionar · Voltar para cancelar</label>
+            <label>$ADDON[plugin.video.kingiptv 32142]</label>
             <animation effect="fade" start="0" end="100" time="350" delay="250" tween="sine" easing="out">WindowOpen</animation>
             <animation effect="fade" start="100" end="0" time="200" tween="sine" easing="in">WindowClose</animation>
         </control>

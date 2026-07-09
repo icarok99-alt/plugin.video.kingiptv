@@ -254,3 +254,40 @@ msgstr "GUIA DE PROGRAMAÇÃO"
 msgctxt "#32137"
 msgid "PLEASE WAIT WHILE PLAYBACK STARTS..."
 msgstr "Aguarde enquanto a reprodução inicia..."
+
+msgctxt "#32138"
+msgid "WATCH"
+msgstr "ASSISTIR"
+
+msgctxt "#32139"
+msgid "UP/DOWN: NAVIGATE"
+msgstr "CIMA/BAIXO: NAVEGAR"
+
+msgctxt "#32140"
+msgid "LEFT/RIGHT: SWITCH PANEL"
+msgstr "ESQ/DIR: MUDAR PAINEL"
+
+msgctxt "#32141"
+msgid "BACK: CLOSE"
+msgstr "VOLTAR: FECHAR"
+
+msgctxt "#32142"
+msgid "Press OK to select · Back to cancel"
+msgstr "Pressione OK para selecionar · Voltar para cancelar"
+
+msgctxt "#32143"
+msgid "NOW"
+msgstr "AGORA"
+
+msgctxt "#32144"
+msgid "UPCOMING PROGRAMS"
+msgstr "PRÓXIMOS PROGRAMAS"
+
+msgctxt "#32145"
+msgid "Remaining"
+msgstr "Restam"
+
+msgctxt "#32146"
+msgid "min"
+msgstr "min"
+
