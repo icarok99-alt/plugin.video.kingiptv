@@ -280,6 +280,7 @@
                 <font>font12</font>
                 <textcolor>FFCFCFCF</textcolor>
                 <label>$INFO[Window(Home).Property(epg.current.desc)]</label>
+                <autoscroll delay="2100" time="2100" repeat="2100">true</autoscroll>
             </control>
 
             <control type="image">

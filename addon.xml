@@ -7,7 +7,6 @@
         <import addon="script.module.beautifulsoup4"/>
         <import addon="script.module.requests"/>
         <import addon="script.module.aws-solver"/>
-        <import addon="script.module.inputstreamhelper" />
         <import addon="inputstream.ffmpegdirect" />
         <import addon="inputstream.adaptive" />
     </requires>

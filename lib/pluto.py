@@ -2,6 +2,8 @@
 
 import uuid
 import re
+import time
+import threading
 from datetime import datetime, timedelta, timezone
 from lib.helper import *
 from urllib.parse import quote_plus
@@ -42,6 +44,10 @@ def build_session():
     return session
 
 SESSION = build_session()
+
+EPG_CACHE_TTL = 90  # segundos
+_epg_cache_lock = threading.Lock()
+_epg_cache = {'data': None, 'ts': 0.0}
 
 
 def parse_iso_datetime(s):
@@ -172,7 +178,15 @@ def playlist_pluto():
     return channels_kodi
 
 
-def playlist_pluto_epg():
+def playlist_pluto_epg(force_refresh=False):
+    now_ts = time.time()
+    if not force_refresh:
+        with _epg_cache_lock:
+            cached = _epg_cache['data']
+            age = now_ts - _epg_cache['ts']
+            if cached is not None and age < EPG_CACHE_TTL:
+                return cached
+
     result = []
     try:
         time_brazil = get_current_time()
@@ -182,24 +196,53 @@ def playlist_pluto_epg():
         to_str = to_utc.strftime('%Y-%m-%dT%H:%M:%SZ')
 
         url = f'https://api.pluto.tv/v2/channels?start={from_str}&stop={to_str}'
-        try:
-            r = SESSION.get(f'https://boot.pluto.tv/v4/start?appName=web&appVersion=9.19.0-7a6c115631d945c4f7327de3e03b7c474b692657&deviceVersion=148.0.0&deviceModel=web&deviceMake=firefox&deviceType=web&clientID=df8c4848-8b94-4323-9ca6-d0b802a9589c&clientModelNumber=1.0.0&channelSlug=5f120e94a5714d00074576a1&serverSideAds=false&drmCapabilities=widevine%3AL3&blockingMode=&notificationVersion=1&appLaunchCount=0&lastAppLaunchDate={from_str}&clientTime={to_str}', headers=PLUTO_HEADERS, timeout=REQUEST_TIMEOUT)
-            r.raise_for_status()
-            data_api = r.json()
-            session_token = data_api.get('sessionToken', '')
-            params = data_api.get('stitcherParams', '')
-        except Exception as e:
-            log(f'playlist_pluto_epg: falha ao obter sessionToken/stitcherParams: {e}')
+        boot_url = (
+            'https://boot.pluto.tv/v4/start?appName=web&appVersion=9.19.0-7a6c115631d945c4f7327de3e03b7c474b692657'
+            '&deviceVersion=148.0.0&deviceModel=web&deviceMake=firefox&deviceType=web'
+            '&clientID=df8c4848-8b94-4323-9ca6-d0b802a9589c&clientModelNumber=1.0.0'
+            '&channelSlug=5f120e94a5714d00074576a1&serverSideAds=false&drmCapabilities=widevine%3AL3'
+            f'&blockingMode=&notificationVersion=1&appLaunchCount=0&lastAppLaunchDate={from_str}&clientTime={to_str}'
+        )
+
+        boot_result = {}
+        channels_result = {}
+
+        def fetch_boot():
+            try:
+                r = SESSION.get(boot_url, headers=PLUTO_HEADERS, timeout=REQUEST_TIMEOUT)
+                r.raise_for_status()
+                boot_result['data'] = r.json()
+            except Exception as e:
+                boot_result['error'] = e
+
+        def fetch_channels():
+            try:
+                resp = SESSION.get(url, headers=PLUTO_HEADERS, timeout=REQUEST_TIMEOUT)
+                resp.raise_for_status()
+                channels_result['data'] = resp.json()
+            except Exception as e:
+                channels_result['error'] = e
+
+        t_boot = threading.Thread(target=fetch_boot, daemon=True)
+        t_channels = threading.Thread(target=fetch_channels, daemon=True)
+        t_boot.start()
+        t_channels.start()
+        t_boot.join(timeout=REQUEST_TIMEOUT + 5)
+        t_channels.join(timeout=REQUEST_TIMEOUT + 5)
+
+        if 'error' in boot_result:
+            log(f"playlist_pluto_epg: falha ao obter sessionToken/stitcherParams: {boot_result['error']}")
             params = ''
             session_token = ''
+        else:
+            data_api = boot_result.get('data') or {}
+            session_token = data_api.get('sessionToken', '')
+            params = data_api.get('stitcherParams', '')
 
-        try:
-            resp = SESSION.get(url, headers=PLUTO_HEADERS, timeout=REQUEST_TIMEOUT)
-            resp.raise_for_status()
-            channels = resp.json()
-        except Exception as e:
-            log(f'playlist_pluto_epg: falha ao obter lista de canais: {e}')
+        if 'error' in channels_result:
+            log(f"playlist_pluto_epg: falha ao obter lista de canais: {channels_result['error']}")
             return result
+        channels = channels_result.get('data') or []
 
         for channel in channels:
             number = channel.get('number', 0)
@@ -250,5 +293,10 @@ def playlist_pluto_epg():
 
     except Exception as e:
         log(f'playlist_pluto_epg: erro geral: {e}')
+
+    if result:
+        with _epg_cache_lock:
+            _epg_cache['data'] = result
+            _epg_cache['ts'] = time.time()
 
     return result

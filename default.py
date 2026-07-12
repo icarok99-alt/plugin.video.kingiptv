@@ -6,7 +6,6 @@ import sys
 import json
 import time
 import threading
-import inputstreamhelper
 from lib.helper import *
 from lib import xtream, tunein, pluto, imdb, matcher, list_manager
 from lib.epg_dialog import open_epg
@@ -245,16 +244,14 @@ def live_categories():
 
 def build_iptv_play_item(name, description, iconimage, url):
     proxy_url = 'http://127.0.0.1:{}/?url={}'.format(start_proxy_if_needed(), quote_plus(url))
-    helper = inputstreamhelper.Helper('hls')
-    if not helper.check_inputstream():
-        return None, None
     play_item = xbmcgui.ListItem(path=proxy_url)
     play_item.setContentLookup(False)
     play_item.setProperty('IsPlayable', 'true')
     play_item.setProperty('IsLive', 'true')
-    play_item.setProperty('inputstream', helper.inputstream_addon)
-    play_item.setProperty('inputstream.adaptive.manifest_type', 'hls')
-    play_item.setProperty('inputstream.adaptive.live_delay', '60')
+    play_item.setProperty('inputstream', 'inputstream.ffmpegdirect')
+    play_item.setProperty('inputstream.ffmpegdirect.is_realtime_stream', 'true')
+    play_item.setProperty('inputstream.ffmpegdirect.stream_mode', 'live')
+    play_item.setProperty('inputstream.ffmpegdirect.manifest_type', 'hls')
     play_item.setArt({"icon": iconimage or "DefaultVideo.png", "thumb": iconimage or "DefaultVideo.png"})
     play_item.setMimeType("application/vnd.apple.mpegurl")
     info_tag = play_item.getVideoInfoTag()
@@ -267,15 +264,12 @@ def build_iptv_play_item(name, description, iconimage, url):
 def build_pluto_play_item(name, description, iconimage, url):
     if not url:
         return None, None
-    helper = inputstreamhelper.Helper('hls')
-    if not helper.check_inputstream():
-        return None, None
     clean_url = url.split('|')[0] if '|' in url else url
     header_str = url.split('|', 1)[1] if '|' in url else 'User-Agent={}'.format(quote_plus(pluto.USER_AGENT))
     li = xbmcgui.ListItem(path=clean_url)
     li.setProperty('IsPlayable', 'true')
     li.setProperty('IsLive', 'true')
-    li.setProperty('inputstream', helper.inputstream_addon)
+    li.setProperty('inputstream', 'inputstream.adaptive')
     li.setProperty('inputstream.adaptive.manifest_type', 'hls')
     li.setProperty('inputstream.adaptive.live_delay', '25')
     li.setProperty('inputstream.adaptive.stream_headers', header_str)
