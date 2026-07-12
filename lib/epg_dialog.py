@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*-
+
 import threading
 import time
 
@@ -6,7 +6,7 @@ import xbmc
 import xbmcaddon
 import xbmcgui
 
-from lib.xtream import epg_lookup_current_next, epg_format_range
+from lib.xtream import epg_lookup_current_next, epg_format_range, get_epg_programs
 from lib.loading_window import loading_manager
 
 ADDON = xbmcaddon.Addon()
@@ -17,21 +17,25 @@ ACTION_NAV_BACK = 92
 
 HOME = xbmcgui.Window(10000)
 
-_EPG_PROPS = (
+EPG_PROPS = (
     'epg.channel', 'epg.current.title', 'epg.current.desc',
     'epg.current.range', 'epg.current.remaining', 'epg.current.percent',
 )
-_EPG_CURRENT_PROPS = tuple(p for p in _EPG_PROPS if p != 'epg.channel')
+EPG_CURRENT_PROPS = tuple(p for p in EPG_PROPS if p != 'epg.channel')
 
-_START_TIMEOUT = 30
-_POLL_INTERVAL = 0.3
-_TICK_INTERVAL = 20.0
-_TICK_STEP = 0.5
+START_TIMEOUT = 30
+POLL_INTERVAL = 0.3
+TICK_INTERVAL = 20.0
+TICK_STEP = 0.5
+
+EAGER_WINDOW_RADIUS = 16
+LAZY_BATCH_SIZE = 25
+LAZY_BATCH_PAUSE = 0.05
 
 
-class _LiveMonitor(xbmc.Player):
+class LiveMonitor(xbmc.Player):
     def __init__(self):
-        super(_LiveMonitor, self).__init__()
+        super(LiveMonitor, self).__init__()
         self.started = threading.Event()
         self.stopped = threading.Event()
 
@@ -52,13 +56,13 @@ class _LiveMonitor(xbmc.Player):
         self.stopped.set()
 
 
-class _BusySuppressor(object):
+class BusySuppressor(object):
     def __init__(self):
-        self._stop = threading.Event()
-        self._thread = None
+        self.stop = threading.Event()
+        self.thread = None
 
-    def _run(self):
-        while not self._stop.wait(0.1):
+    def run(self):
+        while not self.stop.wait(0.1):
             try:
                 xbmc.executebuiltin('Dialog.Close(busydialog,true)')
                 xbmc.executebuiltin('Dialog.Close(busydialognocancel,true)')
@@ -66,14 +70,14 @@ class _BusySuppressor(object):
                 pass
 
     def start(self):
-        self._stop.clear()
-        self._thread = threading.Thread(target=self._run, daemon=True)
-        self._thread.start()
+        self.stop.clear()
+        self.thread = threading.Thread(target=self.run, daemon=True)
+        self.thread.start()
 
     def stop(self):
-        self._stop.set()
-        if self._thread and self._thread.is_alive():
-            self._thread.join(timeout=0.5)
+        self.stop.set()
+        if self.thread and self.thread.is_alive():
+            self.thread.join(timeout=0.5)
         try:
             xbmc.executebuiltin('Dialog.Close(busydialog,true)')
             xbmc.executebuiltin('Dialog.Close(busydialognocancel,true)')
@@ -94,15 +98,19 @@ class EPGDialog(xbmcgui.WindowXMLDialog):
         self.channels = channels or []
         self.fanart = fanart or ''
         self.start_pos = start_pos
-        self._last_pos = -1
+        self.last_pos = -1
         self.selected_channel = None
         self.back_requested = False
         self.video_reclaimed = False
-        self._active = False
-        self._tick_thread = None
-        self._video_watch_thread = None
-        self._opened_at = 0
-        self._busy_suppressor = busy_suppressor
+        self.active = False
+        self.tick_thread = None
+        self.video_watch_thread = None
+        self.lazy_epg_thread = None
+        self.opened_at = 0
+        self.busy_suppressor = busy_suppressor
+        self.items = []
+        self.computed = set()
+        self.computed_lock = threading.Lock()
 
     def onInit(self):
         HOME.setProperty('epg.header', self.header)
@@ -110,68 +118,125 @@ class EPGDialog(xbmcgui.WindowXMLDialog):
 
         container = self.getControl(3001)
         container.reset()
-        now = int(time.time())
 
         items = []
         for ch in self.channels:
             li = xbmcgui.ListItem(label=ch.get('name', ''))
             icon = ch.get('icon') or ''
             li.setArt({'icon': icon, 'thumb': icon})
-            current, _next = epg_lookup_current_next(ch.get('programs') or [])
-            if current:
-                li.setProperty('current', current.get('title', '') or '')
-                start = int(current.get('start') or 0)
-                end = int(current.get('end') or 0)
-                pct = 0
-                if end > start:
-                    pct = max(0, min(100, int((now - start) * 100 / (end - start))))
-                li.setProperty('percent', str(pct))
             items.append(li)
 
         if items:
             container.addItems(items)
+        self.items = items
 
         start_pos = self.start_pos if 0 <= self.start_pos < len(self.channels) else 0
         if items:
             container.selectItem(start_pos)
         self.setFocusId(3001)
-        self._last_pos = start_pos
+        self.last_pos = start_pos
 
-        self._active = True
-        self._opened_at = time.time()
-        self._update_details(start_pos)
+        self.active = True
+        self.opened_at = time.time()
 
-        self._tick_thread = threading.Thread(target=self._tick_loop, daemon=True)
-        self._tick_thread.start()
-        self._video_watch_thread = threading.Thread(target=self._video_watch_loop, daemon=True)
-        self._video_watch_thread.start()
+        self.ensure_window(start_pos)
+        self.update_details(start_pos)
 
-        if self._busy_suppressor is not None:
-            self._busy_suppressor.stop()
-            self._busy_suppressor = None
+        self.tick_thread = threading.Thread(target=self.tick_loop, daemon=True)
+        self.tick_thread.start()
+        self.video_watch_thread = threading.Thread(target=self.video_watch_loop, daemon=True)
+        self.video_watch_thread.start()
+        self.lazy_epg_thread = threading.Thread(target=self.lazy_epg_loop, daemon=True)
+        self.lazy_epg_thread.start()
 
-    def _tick_loop(self):
+        if self.busy_suppressor is not None:
+            self.busy_suppressor.stop()
+            self.busy_suppressor = None
+
+    def get_programs(self, channel):
+        programs = channel.get('programs')
+        if programs is None:
+            epg_channel_id = channel.get('epg_channel_id') or ''
+            dns = channel.get('epg_dns') or ''
+            if epg_channel_id and dns:
+                try:
+                    programs = get_epg_programs(epg_channel_id, dns, limit=48)
+                    programs = sorted(programs or [], key=lambda p: p.get('start') or 0)
+                except Exception:
+                    programs = []
+            else:
+                programs = []
+            channel['programs'] = programs
+        return programs
+
+    def compute_epg_for_index(self, idx):
+        with self.computed_lock:
+            if idx in self.computed:
+                return
+            self.computed.add(idx)
+        if idx < 0 or idx >= len(self.channels) or idx >= len(self.items):
+            return
+        channel = self.channels[idx]
+        li = self.items[idx]
+        now = int(time.time())
+        current, _next = epg_lookup_current_next(self.get_programs(channel))
+        if current:
+            li.setProperty('current', current.get('title', '') or '')
+            start = int(current.get('start') or 0)
+            end = int(current.get('end') or 0)
+            pct = 0
+            if end > start:
+                pct = max(0, min(100, int((now - start) * 100 / (end - start))))
+            li.setProperty('percent', str(pct))
+
+    def ensure_window(self, pos, radius=EAGER_WINDOW_RADIUS):
+        if not self.channels:
+            return
+        lo = max(0, pos - radius)
+        hi = min(len(self.channels) - 1, pos + radius)
+        for idx in range(lo, hi + 1):
+            if idx not in self.computed:
+                self.compute_epg_for_index(idx)
+
+    def lazy_epg_loop(self):
+        monitor = xbmc.Monitor()
+        total = len(self.channels)
+        idx = 0
+        processed_since_pause = 0
+        while self.active and idx < total:
+            if idx not in self.computed:
+                self.compute_epg_for_index(idx)
+                processed_since_pause += 1
+                if processed_since_pause >= LAZY_BATCH_SIZE:
+                    processed_since_pause = 0
+                    if monitor.waitForAbort(LAZY_BATCH_PAUSE):
+                        return
+                    if not self.active:
+                        return
+            idx += 1
+
+    def tick_loop(self):
         monitor = xbmc.Monitor()
         elapsed = 0.0
-        while self._active:
-            if monitor.waitForAbort(_TICK_STEP):
+        while self.active:
+            if monitor.waitForAbort(TICK_STEP):
                 return
-            if not self._active:
+            if not self.active:
                 return
-            elapsed += _TICK_STEP
-            if elapsed >= _TICK_INTERVAL:
+            elapsed += TICK_STEP
+            if elapsed >= TICK_INTERVAL:
                 elapsed = 0.0
                 try:
-                    self._update_details(self._last_pos)
+                    self.update_details(self.last_pos)
                 except Exception:
                     pass
 
-    def _video_watch_loop(self):
+    def video_watch_loop(self):
         monitor = xbmc.Monitor()
         player = xbmc.Player()
         if monitor.waitForAbort(1.0):
             return
-        while self._active:
+        while self.active:
             try:
                 if player.isPlayingVideo():
                     self.video_reclaimed = True
@@ -185,16 +250,17 @@ class EPGDialog(xbmcgui.WindowXMLDialog):
     def onAction(self, action):
         xbmcgui.WindowXMLDialog.onAction(self, action)
         if action.getId() in (ACTION_PREVIOUS_MENU, ACTION_NAV_BACK):
-            if time.time() - self._opened_at < 0.6:
+            if time.time() - self.opened_at < 0.6:
                 return
             self.back_requested = True
             self.close()
             return
         if self.getFocusId() == 3001:
             pos = self.getControl(3001).getSelectedPosition()
-            if pos != self._last_pos:
-                self._last_pos = pos
-                self._update_details(pos)
+            if pos != self.last_pos:
+                self.last_pos = pos
+                self.ensure_window(pos)
+                self.update_details(pos)
 
     def onClick(self, control_id):
         if control_id == 3001:
@@ -206,17 +272,17 @@ class EPGDialog(xbmcgui.WindowXMLDialog):
             self.back_requested = True
             self.close()
 
-    def _update_details(self, pos):
-        if not self._active:
+    def update_details(self, pos):
+        if not self.active:
             return
         if pos < 0 or pos >= len(self.channels):
             HOME.clearProperty('epg.channel')
-            for prop in _EPG_CURRENT_PROPS:
+            for prop in EPG_CURRENT_PROPS:
                 HOME.clearProperty(prop)
             return
 
         channel = self.channels[pos]
-        programs = channel.get('programs') or []
+        programs = self.get_programs(channel)
         current, nextp = epg_lookup_current_next(programs)
         now = int(time.time())
 
@@ -262,7 +328,7 @@ class EPGDialog(xbmcgui.WindowXMLDialog):
             if progress_ctrl is not None:
                 progress_ctrl.setPercent(0)
 
-        if not self._active:
+        if not self.active:
             return
         try:
             upcoming_container = self.getControl(3002)
@@ -279,35 +345,36 @@ class EPGDialog(xbmcgui.WindowXMLDialog):
             upcoming_container.addItems(upcoming_items)
 
     def close(self):
-        self._active = False
-        for prop in _EPG_PROPS + ('epg.header', 'epg.fanart'):
+        self.active = False
+        for prop in EPG_PROPS + ('epg.header', 'epg.fanart'):
             HOME.clearProperty(prop)
         xbmcgui.WindowXMLDialog.close(self)
 
 
-_GUIDE_ACTIVE_PROP = 'kingiptv_epg_guide_active'
+GUIDE_ACTIVE_PROP = 'kingiptv_epg_guide_active'
 
 
 def open_epg(header, channels, build_listitem, fanart=''):
-    if HOME.getProperty(_GUIDE_ACTIVE_PROP) == 'true':
+    if HOME.getProperty(GUIDE_ACTIVE_PROP) == 'true':
         return
-    HOME.setProperty(_GUIDE_ACTIVE_PROP, 'true')
+    HOME.setProperty(GUIDE_ACTIVE_PROP, 'true')
     try:
-        _open_epg_impl(header, channels, build_listitem, fanart)
+        open_epg_impl(header, channels, build_listitem, fanart)
     finally:
-        HOME.clearProperty(_GUIDE_ACTIVE_PROP)
+        HOME.clearProperty(GUIDE_ACTIVE_PROP)
 
 
-def _open_epg_impl(header, channels, build_listitem, fanart=''):
+def open_epg_impl(header, channels, build_listitem, fanart=''):
     channels = [c for c in (channels or []) if c.get('name')]
     for ch in channels:
-        ch['programs'] = sorted(ch.get('programs') or [], key=lambda p: p.get('start') or 0)
+        if ch.get('programs') is not None:
+            ch['programs'] = sorted(ch.get('programs') or [], key=lambda p: p.get('start') or 0)
 
     if not channels:
         return
 
     monitor = xbmc.Monitor()
-    live_monitor = _LiveMonitor()
+    live_monitor = LiveMonitor()
     pos = 0
     reopen_suppressor = None
 
@@ -321,9 +388,9 @@ def _open_epg_impl(header, channels, build_listitem, fanart=''):
         back_requested = dlg.back_requested
         video_reclaimed = dlg.video_reclaimed
         try:
-            pos = channels.index(selected) if selected else dlg._last_pos
+            pos = channels.index(selected) if selected else dlg.last_pos
         except ValueError:
-            pos = dlg._last_pos
+            pos = dlg.last_pos
         del dlg
 
         if video_reclaimed:
@@ -332,7 +399,7 @@ def _open_epg_impl(header, channels, build_listitem, fanart=''):
             while not live_monitor.stopped.is_set():
                 if monitor.waitForAbort(0.2):
                     return
-            reopen_suppressor = _BusySuppressor()
+            reopen_suppressor = BusySuppressor()
             reopen_suppressor.start()
             continue
 
@@ -354,7 +421,7 @@ def _open_epg_impl(header, channels, build_listitem, fanart=''):
                 loading_manager.force_close()
                 return
             waited += 0.1
-            if waited >= _START_TIMEOUT:
+            if waited >= START_TIMEOUT:
                 try:
                     live_monitor.stop()
                 except Exception:
@@ -367,7 +434,7 @@ def _open_epg_impl(header, channels, build_listitem, fanart=''):
 
         if not live_monitor.started.is_set():
             xbmcgui.Dialog().notification(header, 'Nao foi possivel iniciar a reproducao deste canal', xbmcgui.NOTIFICATION_ERROR, 3000)
-            reopen_suppressor = _BusySuppressor()
+            reopen_suppressor = BusySuppressor()
             reopen_suppressor.start()
             continue
 
@@ -378,5 +445,5 @@ def _open_epg_impl(header, channels, build_listitem, fanart=''):
         if monitor.abortRequested():
             return
 
-        reopen_suppressor = _BusySuppressor()
+        reopen_suppressor = BusySuppressor()
         reopen_suppressor.start()

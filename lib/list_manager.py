@@ -1,14 +1,11 @@
-# -*- coding: utf-8 -*-
+
 
 import os
 import json
-try:
-    from lib.helper import profile, translate, xbmcvfs
-except Exception:
-    from helper import profile, translate, xbmcvfs
-_ACTIVE_LIST_FILE = translate(os.path.join(profile, 'active_list.json'))
+from lib.helper import profile, translate, xbmcvfs
+ACTIVE_LIST_FILE = translate(os.path.join(profile, 'active_list.json'))
 
-def _ensure_profile():
+def ensure_profile():
     try:
         if not xbmcvfs.exists(profile):
             xbmcvfs.mkdirs(profile)
@@ -21,8 +18,8 @@ def _ensure_profile():
 
 def get_active_list():
     try:
-        if os.path.exists(_ACTIVE_LIST_FILE):
-            with open(_ACTIVE_LIST_FILE, 'r', encoding='utf-8') as f:
+        if os.path.exists(ACTIVE_LIST_FILE):
+            with open(ACTIVE_LIST_FILE, 'r', encoding='utf-8') as f:
                 data = json.load(f)
             if data.get('dns') and data.get('username') and data.get('password'):
                 return data
@@ -31,7 +28,7 @@ def get_active_list():
     return None
 
 def set_active_list(dns, username, password, label=''):
-    _ensure_profile()
+    ensure_profile()
     data = {
         'dns': dns,
         'username': username,
@@ -39,7 +36,7 @@ def set_active_list(dns, username, password, label=''):
         'label': label,
     }
     try:
-        with open(_ACTIVE_LIST_FILE, 'w', encoding='utf-8') as f:
+        with open(ACTIVE_LIST_FILE, 'w', encoding='utf-8') as f:
             json.dump(data, f, ensure_ascii=False)
         return True
     except Exception:
@@ -47,8 +44,8 @@ def set_active_list(dns, username, password, label=''):
 
 def clear_active_list():
     try:
-        if os.path.exists(_ACTIVE_LIST_FILE):
-            os.remove(_ACTIVE_LIST_FILE)
+        if os.path.exists(ACTIVE_LIST_FILE):
+            os.remove(ACTIVE_LIST_FILE)
         return True
     except Exception:
         return False

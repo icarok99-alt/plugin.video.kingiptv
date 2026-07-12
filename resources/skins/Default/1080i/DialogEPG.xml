@@ -5,7 +5,7 @@
 
     <controls>
 
-                <control type="image">
+        <control type="image">
             <posx>0</posx>
             <posy>0</posy>
             <width>1920</width>
@@ -22,7 +22,7 @@
             <texture>epg_bg_gradient.png</texture>
         </control>
 
-                <control type="group">
+        <control type="group">
             <posx>0</posx>
             <posy>0</posy>
 
@@ -39,7 +39,8 @@
                 <posy>8</posy>
                 <width>760</width>
                 <height>84</height>
-                <texturefocus colordiffuse="50F3B73B">white.png</texturefocus>
+                <texturenofocus>-</texturenofocus>
+                <texturefocus>-</texturefocus>
                 <label></label>
                 <onup>3010</onup>
                 <ondown>3001</ondown>
@@ -92,7 +93,7 @@
             </control>
         </control>
 
-                        <control type="group">
+        <control type="group">
             <posx>40</posx>
             <posy>118</posy>
 
@@ -203,7 +204,7 @@
             </control>
         </control>
 
-                <control type="group">
+        <control type="group">
             <posx>968</posx>
             <posy>118</posy>
 
@@ -232,7 +233,7 @@
                 <height>36</height>
                 <font>font13</font>
                 <textcolor>FFF3B73B</textcolor>
-                <label>$ADDON[plugin.video.kingiptv 32143]: $INFO[Window(Home).Property(epg.current.title)]</label>
+                <label>$ADDON[plugin.video.kingiptv 32140] $INFO[Window(Home).Property(epg.current.title)]</label>
                 <visible>!String.IsEmpty(Window(Home).Property(epg.current.title))</visible>
             </control>
 
@@ -255,7 +256,7 @@
                 <align>right</align>
                 <font>font12</font>
                 <textcolor>FF9A9A9A</textcolor>
-                <label>$ADDON[plugin.video.kingiptv 32145] $INFO[Window(Home).Property(epg.current.remaining)] $ADDON[plugin.video.kingiptv 32146]</label>
+                <label>$ADDON[plugin.video.kingiptv 32141] $INFO[Window(Home).Property(epg.current.remaining)] $ADDON[plugin.video.kingiptv 32142]</label>
                 <visible>!String.IsEmpty(Window(Home).Property(epg.current.remaining))</visible>
             </control>
 
@@ -304,7 +305,7 @@
                 <height>36</height>
                 <font>font13</font>
                 <textcolor>FFF3B73B</textcolor>
-                <label>$ADDON[plugin.video.kingiptv 32144]</label>
+                <label>$ADDON[plugin.video.kingiptv 32143]</label>
             </control>
 
             <control type="list" id="3002">
@@ -378,7 +379,7 @@
             </control>
         </control>
 
-                <control type="group">
+        <control type="group">
             <posx>0</posx>
             <posy>992</posy>
 
@@ -408,7 +409,7 @@
                     <aligny>center</aligny>
                     <font>font12</font>
                     <textcolor>FFE6E6E6</textcolor>
-                    <label>$ADDON[plugin.video.kingiptv 32138]</label>
+                    <label>$ADDON[plugin.video.kingiptv 32144]</label>
                 </control>
             </control>
 
@@ -437,7 +438,7 @@
                     <aligny>center</aligny>
                     <font>font12</font>
                     <textcolor>FFE6E6E6</textcolor>
-                    <label>$ADDON[plugin.video.kingiptv 32139]</label>
+                    <label>$ADDON[plugin.video.kingiptv 32145]</label>
                 </control>
             </control>
 
@@ -466,7 +467,7 @@
                     <aligny>center</aligny>
                     <font>font12</font>
                     <textcolor>FFE6E6E6</textcolor>
-                    <label>$ADDON[plugin.video.kingiptv 32140]</label>
+                    <label>$ADDON[plugin.video.kingiptv 32146]</label>
                 </control>
             </control>
 
@@ -488,7 +489,7 @@
                     <aligny>center</aligny>
                     <font>font12</font>
                     <textcolor>FFE6E6E6</textcolor>
-                    <label>$ADDON[plugin.video.kingiptv 32141]</label>
+                    <label>$ADDON[plugin.video.kingiptv 32147]</label>
                 </control>
             </control>
         </control>

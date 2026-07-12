@@ -1,19 +1,20 @@
-# -*- coding: utf-8 -*-
+
 
 import os
 import re
 import sys
 import json
+import time
 import threading
-from lib.helper import *
 import inputstreamhelper
+from lib.helper import *
 from lib import xtream, tunein, pluto, imdb, matcher, list_manager
 from lib.epg_dialog import open_epg
-from lib.proxy import UnifiedServer, PROXY_PORT
+from lib.proxy import UnifiedServer, PROXY_PORT_POOL, get_active_port, is_port_free, get_preferred_port
 from lib.db_manager import get_db
 from lib.loading_window import loading_manager
-_addon = xbmcaddon.Addon()
-getString = _addon.getLocalizedString
+addon = xbmcaddon.Addon()
+getString = addon.getLocalizedString
 profile = xbmcvfs.translatePath('special://profile/addon_data/plugin.video.kingiptv')
 if not exists(profile):
     try:
@@ -31,19 +32,34 @@ proxy_lock = threading.Lock()
 
 def start_proxy_if_needed():
     global proxy_server
-    if proxy_server is not None:
-        return PROXY_PORT
+    if proxy_server is not None and proxy_server.port:
+        return proxy_server.port
     with proxy_lock:
-        if proxy_server is not None:
-            return PROXY_PORT
+        if proxy_server is not None and proxy_server.port:
+            return proxy_server.port
+
+
+        preferred = get_preferred_port()
+        check_order = PROXY_PORT_POOL
+        if preferred in PROXY_PORT_POOL:
+            check_order = [preferred] + [p for p in PROXY_PORT_POOL if p != preferred]
+        for candidate in check_order:
+            if not is_port_free(candidate):
+                return candidate
         try:
-            server = UnifiedServer(port=PROXY_PORT)
+            server = UnifiedServer()
             t = threading.Thread(target=server.start, daemon=True)
             t.start()
+            for _ in range(50):
+                if server.port:
+                    break
+                time.sleep(0.05)
             proxy_server = server
+            if server.port:
+                return server.port
         except Exception:
             pass
-    return PROXY_PORT
+    return get_active_port()
 
 def go_home():
     try:
@@ -133,7 +149,7 @@ def index_iptv():
     active = list_manager.get_active_list()
     addMenuItem({'name': TITULO, 'description': ''}, destiny='')
     if active:
-        xtream._ensure_epg_background(active['dns'], active['username'], active['password'])
+        xtream.ensure_epg_background(active['dns'], active['username'], active['password'])
         addMenuItem({'name': getString(32000), 'description': ''}, destiny='/live_categories')
         addMenuItem({'name': getString(32001), 'description': ''}, destiny='/channels_pluto')
         addMenuItem({'name': getString(32002), 'description': ''}, destiny='/radios')
@@ -160,7 +176,7 @@ def prompt_select_list():
     for n, (dns, username, password) in enumerate(iptv):
         label = 'LISTA {0}'.format(n + 1)
         labels.append(label)
-        if active and dns == active.get('dns') and str(username) == str(active.get('username')) \
+        if active and dns == active.get('dns') and str(username) == str(active.get('username'))\
                 and str(password) == str(active.get('password')):
             preselect = n
     heading = getString(32041) if active else getString(32040)
@@ -176,7 +192,7 @@ def prompt_select_list():
     list_manager.set_active_list(dns, username, password, label)
     notify(getString(32042))
     xtream.refresh_vod_catalogs_background(dns, username, password)
-    xtream._ensure_epg_background(dns, username, password)
+    xtream.ensure_epg_background(dns, username, password)
 
 @route('/')
 def index():
@@ -202,7 +218,7 @@ def live_categories():
     dns = active['dns']
     username = active['username']
     password = active['password']
-    xtream._ensure_epg_background(dns, username, password)
+    xtream.ensure_epg_background(dns, username, password)
     cat = xtream.API(dns, username, password).channels_category()
     if cat:
         for i in cat:
@@ -226,11 +242,19 @@ def live_categories():
                 arquivo.write(url_problem)
         notify(getString(32014))
 
-def _build_iptv_play_item(name, description, iconimage, url):
+
+def build_iptv_play_item(name, description, iconimage, url):
     proxy_url = 'http://127.0.0.1:{}/?url={}'.format(start_proxy_if_needed(), quote_plus(url))
+    helper = inputstreamhelper.Helper('hls')
+    if not helper.check_inputstream():
+        return None, None
     play_item = xbmcgui.ListItem(path=proxy_url)
     play_item.setContentLookup(False)
     play_item.setProperty('IsPlayable', 'true')
+    play_item.setProperty('IsLive', 'true')
+    play_item.setProperty('inputstream', helper.inputstream_addon)
+    play_item.setProperty('inputstream.adaptive.manifest_type', 'hls')
+    play_item.setProperty('inputstream.adaptive.live_delay', '60')
     play_item.setArt({"icon": iconimage or "DefaultVideo.png", "thumb": iconimage or "DefaultVideo.png"})
     play_item.setMimeType("application/vnd.apple.mpegurl")
     info_tag = play_item.getVideoInfoTag()
@@ -239,22 +263,25 @@ def _build_iptv_play_item(name, description, iconimage, url):
     info_tag.setMediaType('video')
     return proxy_url, play_item
 
-def _build_pluto_play_item(name, description, iconimage, url):
+
+def build_pluto_play_item(name, description, iconimage, url):
     if not url:
         return None, None
     helper = inputstreamhelper.Helper('hls')
     if not helper.check_inputstream():
         return None, None
-    headers = url.split('|')[1] if '|' in url else ''
     clean_url = url.split('|')[0] if '|' in url else url
+    header_str = url.split('|', 1)[1] if '|' in url else 'User-Agent={}'.format(quote_plus(pluto.USER_AGENT))
     li = xbmcgui.ListItem(path=clean_url)
     li.setProperty('IsPlayable', 'true')
+    li.setProperty('IsLive', 'true')
     li.setProperty('inputstream', helper.inputstream_addon)
     li.setProperty('inputstream.adaptive.manifest_type', 'hls')
-    li.setProperty('inputstream.adaptive.stream_headers', headers or 'User-Agent=Mozilla/5.0')
-    li.setProperty('inputstream.adaptive.manifest_headers', headers or 'User-Agent=Mozilla/5.0')
+    li.setProperty('inputstream.adaptive.live_delay', '25')
+    li.setProperty('inputstream.adaptive.stream_headers', header_str)
+    li.setProperty('inputstream.adaptive.manifest_headers', header_str)
+    li.setContentLookup(False)
     li.setMimeType('application/x-mpegURL')
-    li.setProperty('inputstream.adaptive.live_delay', '0')
     li.setArt({'icon': iconimage or 'DefaultVideo.png', 'thumb': iconimage or 'DefaultVideo.png'})
     tag = li.getVideoInfoTag()
     tag.setTitle(name)
@@ -275,10 +302,10 @@ def open_channels(param):
 
     xbmcplugin.endOfDirectory(handle, succeeded=False, updateListing=False, cacheToDisc=False)
 
-    def _build(channel):
-        return _build_iptv_play_item(channel['name'], '', channel.get('icon', ''), channel.get('url', ''))
+    def build(channel):
+        return build_iptv_play_item(channel['name'], '', channel.get('icon', ''), channel.get('url', ''))
 
-    open_epg(header=getString(32000), channels=channels, build_listitem=_build)
+    open_epg(header=getString(32000), channels=channels, build_listitem=build)
 
 @route('/play_iptv')
 def play_iptv(param):
@@ -286,7 +313,10 @@ def play_iptv(param):
     description = param.get('description', '')
     iconimage = param.get('iconimage', '')
     url = param.get('url', '')
-    _proxy_url, play_item = _build_iptv_play_item(name, description, iconimage, url)
+    proxy_url, play_item = build_iptv_play_item(name, description, iconimage, url)
+    if not play_item:
+        notify(getString(32016))
+        return
     xbmcplugin.setResolvedUrl(int(sys.argv[1]), True, play_item)
 
 @route('/channels_pluto')
@@ -298,10 +328,10 @@ def channels_pluto():
 
     xbmcplugin.endOfDirectory(handle, succeeded=False, updateListing=False, cacheToDisc=False)
 
-    def _build(channel):
-        return _build_pluto_play_item(channel['name'], '', channel.get('icon', ''), channel.get('url', ''))
+    def build(channel):
+        return build_pluto_play_item(channel['name'], '', channel.get('icon', ''), channel.get('url', ''))
 
-    open_epg(header=getString(32001), channels=channels, build_listitem=_build)
+    open_epg(header=getString(32001), channels=channels, build_listitem=build)
 
 @route('/play_pluto')
 def play_pluto(param):
@@ -309,7 +339,7 @@ def play_pluto(param):
     name = param.get('name', '')
     iconimage = param.get('iconimage', '')
     desc = param.get('description', '')
-    clean_url, li = _build_pluto_play_item(name, desc, iconimage, url)
+    clean_url, li = build_pluto_play_item(name, desc, iconimage, url)
     if not clean_url:
         notify(getString(32016))
         return

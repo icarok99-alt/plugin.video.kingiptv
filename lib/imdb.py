@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*-
+
 
 import re
 import json
@@ -23,8 +23,8 @@ class IMDBScraper:
         }
         self.session = None
         self.token = None
-        self._init_waf()
-    def _init_waf(self):
+        self.init_waf()
+    def init_waf(self):
         try:
             result, self.session = solve(self.base, UA, proxy=self.proxy)
             self.token = result.get('token', '')
@@ -35,15 +35,15 @@ class IMDBScraper:
             self.session = _req.Session()
             if self.proxy:
                 self.session.proxies = {'http': self.proxy, 'https': self.proxy}
-    def _get(self, url: str) -> str:
+    def get(self, url: str) -> str:
         resp = self.session.get(url, headers=self.headers)
         if resp.status_code in (202, 403, 429):
-            self._init_waf()
+            self.init_waf()
             resp = self.session.get(url, headers=self.headers)
         return resp.text
     def soup(self, html_text):
         return BeautifulSoup(html_text, 'html.parser')
-    def _extract_next_data(self, html_text):
+    def extract_next_data(self, html_text):
         match = re.search(
             r'<script id="__NEXT_DATA__" type="application/json">(.+?)</script>',
             html_text, re.DOTALL
@@ -54,9 +54,9 @@ class IMDBScraper:
             return json.loads(match.group(1))
         except json.JSONDecodeError:
             return None
-    def _parse_search_results(self, html_text, name_key: str):
+    def parse_search_results(self, html_text, name_key: str):
         itens = []
-        data = self._extract_next_data(html_text)
+        data = self.extract_next_data(html_text)
         if not data:
             return itens
         results = (
@@ -84,7 +84,7 @@ class IMDBScraper:
         itens = []
         try:
             url = f'{self.base}/pt/search/title/?title={quote(search)}&title_type=tv_series'
-            itens = self._parse_search_results(self._get(url), 'titleText')
+            itens = self.parse_search_results(self.get(url), 'titleText')
         except Exception:
             pass
         return itens
@@ -92,25 +92,25 @@ class IMDBScraper:
         itens = []
         try:
             url = f'{self.base}/pt/search/title/?title={quote(search)}&title_type=feature'
-            itens = self._parse_search_results(self._get(url), 'titleText')
+            itens = self.parse_search_results(self.get(url), 'titleText')
         except Exception:
             pass
         return itens
     def series_250(self, page=1, per_page=250):
-        return self._chart_parser('/pt/chart/toptv/?ref_=chttvm_nv_menu', page, per_page, content_type='series')
+        return self.chart_parser('/pt/chart/toptv/?ref_=chttvm_nv_menu', page, per_page, content_type='series')
     def series_popular(self, page=1, per_page=100):
-        return self._chart_parser('/pt/chart/tvmeter/?ref_=chtmvm_nv_menu', page, per_page, content_type='series')
+        return self.chart_parser('/pt/chart/tvmeter/?ref_=chtmvm_nv_menu', page, per_page, content_type='series')
     def movies_250(self, page=1, per_page=250):
-        return self._chart_parser('/pt/chart/top/?ref_=chtmvm_nv_menu', page, per_page, content_type='movie')
+        return self.chart_parser('/pt/chart/top/?ref_=chtmvm_nv_menu', page, per_page, content_type='movie')
     def movies_popular(self, page=1, per_page=100):
-        return self._chart_parser('/pt/chart/moviemeter/?ref_=chttp_nv_menu', page, per_page, content_type='movie')
-    def _chart_parser(self, chart_path, page=1, per_page=100, content_type='movie'):
+        return self.chart_parser('/pt/chart/moviemeter/?ref_=chttp_nv_menu', page, per_page, content_type='movie')
+    def chart_parser(self, chart_path, page=1, per_page=100, content_type='movie'):
         itens = []
         try:
-            html_text = self._get(self.base + chart_path)
+            html_text = self.get(self.base + chart_path)
             year_map = {}
             try:
-                next_data = self._extract_next_data(html_text)
+                next_data = self.extract_next_data(html_text)
                 if next_data:
                     edges = (
                         next_data.get('props', {}).get('pageProps', {})
@@ -166,7 +166,7 @@ class IMDBScraper:
     def imdb_seasons(self, url):
         itens = []
         try:
-            data = self._extract_next_data(self._get(url))
+            data = self.extract_next_data(self.get(url))
             if not data:
                 return itens
             seasons = data['props']['pageProps']['mainColumnData']['episodes']['seasons']
@@ -182,7 +182,7 @@ class IMDBScraper:
     def imdb_episodes(self, url):
         itens = []
         try:
-            data = self._extract_next_data(self._get(url))
+            data = self.extract_next_data(self.get(url))
             if not data:
                 return itens
             episodes = data['props']['pageProps']['contentData']['section']['episodes']['items']

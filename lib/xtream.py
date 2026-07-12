@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*-
+
 
 import xml.etree.ElementTree as ET
 import base64
@@ -9,10 +9,7 @@ import threading
 import requests
 from requests.adapters import HTTPAdapter
 from requests.packages.urllib3.util.retry import Retry
-try:
-    from lib.helper import *
-except Exception:
-    from helper import *
+from lib.helper import *
 import re
 import time
 from urllib.parse import urlparse, parse_qs
@@ -22,10 +19,10 @@ MAX_RETRIES = 1
 CACHE_FAILED_URLS = {}
 EPG_XML_TTL = 86400
 EPG_XML_INDEX_VERSION = 'kingIPTV_epg'
-_EPG_INDEX_MEMORY = {}
-_EPG_INDEX_LOCK = threading.Lock()
-_EPG_ACTIVE = set()
-_EPG_ACTIVE_LOCK = threading.Lock()
+EPG_INDEX_MEMORY = {}
+EPG_INDEX_LOCK = threading.Lock()
+EPG_ACTIVE = set()
+EPG_ACTIVE_LOCK = threading.Lock()
 BROWSER_UA = (
     'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
     'AppleWebKit/537.36 (KHTML, like Gecko) '
@@ -392,18 +389,18 @@ def build_epg_desc(current=None, nextp=None, day_schedule=None):
                 parts.append(color(line, 'gold'))
     return '\n'.join(parts).strip()
 
-def _epg_server_hash(dns):
+def epg_server_hash(dns):
     return hashlib.md5(dns.encode('utf-8', 'ignore')).hexdigest()[:12]
 
-def _epg_paths(dns):
-    h = _epg_server_hash(dns)
+def epg_paths(dns):
+    h = epg_server_hash(dns)
     return {
         'xml': os.path.join(profile, 'epg_{}.xml'.format(h)),
         'index': os.path.join(profile, 'epg_{}_index.json'.format(h)),
         'meta': os.path.join(profile, 'epg_{}_meta.json'.format(h)),
     }
 
-def _safe_read_json(path):
+def safe_read_json(path):
     try:
         if os.path.exists(path):
             with open(path, 'r', encoding='utf-8') as f:
@@ -412,7 +409,7 @@ def _safe_read_json(path):
         pass
     return {}
 
-def _safe_write_json(path, data):
+def safe_write_json(path, data):
     try:
         with open(path, 'w', encoding='utf-8') as f:
             json.dump(data, f, ensure_ascii=False)
@@ -421,13 +418,13 @@ def _safe_write_json(path, data):
         pass
     return False
 
-def _epg_fingerprint(dns, username, password):
+def epg_fingerprint(dns, username, password):
     return '{}|{}|{}'.format(dns, username, password)
 
-def _epg_xml_fresh(dns, username, password):
-    paths = _epg_paths(dns)
-    meta = _safe_read_json(paths['meta'])
-    if meta.get('fingerprint') != _epg_fingerprint(dns, username, password):
+def epg_xml_fresh(dns, username, password):
+    paths = epg_paths(dns)
+    meta = safe_read_json(paths['meta'])
+    if meta.get('fingerprint') != epg_fingerprint(dns, username, password):
         return False
     fetched_at = int(meta.get('fetched_at') or 0)
     if not fetched_at or (time.time() - fetched_at) >= EPG_XML_TTL:
@@ -437,12 +434,12 @@ def _epg_xml_fresh(dns, username, password):
     except Exception:
         return False
 
-def _epg_index_fresh(dns, username, password):
-    paths = _epg_paths(dns)
-    index = _safe_read_json(paths['index'])
+def epg_index_fresh(dns, username, password):
+    paths = epg_paths(dns)
+    index = safe_read_json(paths['index'])
     if index.get('version') != EPG_XML_INDEX_VERSION:
         return False
-    if index.get('fingerprint') != _epg_fingerprint(dns, username, password):
+    if index.get('fingerprint') != epg_fingerprint(dns, username, password):
         return False
     generated_at = int(index.get('generated_at') or 0)
     if not generated_at or (time.time() - generated_at) >= EPG_XML_TTL:
@@ -456,8 +453,8 @@ def _epg_index_fresh(dns, username, password):
         return False
     return True
 
-def _download_epg_xml(dns, username, password):
-    paths = _epg_paths(dns)
+def download_epg_xml(dns, username, password):
+    paths = epg_paths(dns)
     urls = [
         '{}/xmltv.php?username={}&password={}'.format(dns, username, password),
         '{}/epg.php?username={}&password={}'.format(dns, username, password),
@@ -489,8 +486,8 @@ def _download_epg_xml(dns, username, password):
             except Exception:
                 pass
             os.rename(tmp, paths['xml'])
-            _safe_write_json(paths['meta'], {
-                'fingerprint': _epg_fingerprint(dns, username, password),
+            safe_write_json(paths['meta'], {
+                'fingerprint': epg_fingerprint(dns, username, password),
                 'fetched_at': int(time.time()),
                 'size': len(content),
             })
@@ -499,15 +496,15 @@ def _download_epg_xml(dns, username, password):
                     os.remove(paths['index'])
             except Exception:
                 pass
-            with _EPG_INDEX_LOCK:
-                _EPG_INDEX_MEMORY.pop(dns, None)
+            with EPG_INDEX_LOCK:
+                EPG_INDEX_MEMORY.pop(dns, None)
             return True
         except Exception:
             continue
     return False
 
-def _build_epg_index(dns, username, password):
-    paths = _epg_paths(dns)
+def build_epg_index(dns, username, password):
+    paths = epg_paths(dns)
     if not os.path.exists(paths['xml']):
         log_iptv_problem(dns, 'Arquivo XML não encontrado')
         return False
@@ -601,60 +598,60 @@ def _build_epg_index(dns, username, password):
         log_iptv_problem(dns, f'Resumo: programmes={total_programmes}, com_cid={total_with_cid}, na_janela={total_in_window}, salvos={total_saved}')
         for cid in channels:
             channels[cid].sort(key=lambda x: x.get('start') or 0)
-        _safe_write_json(paths['index'], {
+        safe_write_json(paths['index'], {
             'version': EPG_XML_INDEX_VERSION,
-            'fingerprint': _epg_fingerprint(dns, username, password),
+            'fingerprint': epg_fingerprint(dns, username, password),
             'generated_at': int(time.time()),
             'window_start': window_start,
             'window_end': window_end,
             'channels': channels,
         })
         log_iptv_problem(dns, f'Indexação concluída: {len(channels)} canais, {total_saved} programas')
-        with _EPG_INDEX_LOCK:
-            _EPG_INDEX_MEMORY.pop(dns, None)
+        with EPG_INDEX_LOCK:
+            EPG_INDEX_MEMORY.pop(dns, None)
         return True
     except Exception as e:
         log_iptv_problem(dns, f'Erro na indexação: {e}')
         return False
 
-def _ensure_epg_background(dns, username, password):
-    if _epg_index_fresh(dns, username, password):
+def ensure_epg_background(dns, username, password):
+    if epg_index_fresh(dns, username, password):
         return
-    with _EPG_ACTIVE_LOCK:
-        if dns in _EPG_ACTIVE:
+    with EPG_ACTIVE_LOCK:
+        if dns in EPG_ACTIVE:
             return
-        _EPG_ACTIVE.add(dns)
-    def _worker():
+        EPG_ACTIVE.add(dns)
+    def worker():
         try:
-            xml_fresh = _epg_xml_fresh(dns, username, password)
-            index_fresh = _epg_index_fresh(dns, username, password)
+            xml_fresh = epg_xml_fresh(dns, username, password)
+            index_fresh = epg_index_fresh(dns, username, password)
             if not index_fresh:
                 if not xml_fresh:
-                    if _download_epg_xml(dns, username, password):
-                        _build_epg_index(dns, username, password)
+                    if download_epg_xml(dns, username, password):
+                        build_epg_index(dns, username, password)
                 else:
-                    _build_epg_index(dns, username, password)
+                    build_epg_index(dns, username, password)
         except Exception as e:
             log_iptv_problem(dns, f'Worker EPG erro: {e}')
         finally:
-            with _EPG_ACTIVE_LOCK:
-                _EPG_ACTIVE.discard(dns)
-    t = threading.Thread(target=_worker)
+            with EPG_ACTIVE_LOCK:
+                EPG_ACTIVE.discard(dns)
+    t = threading.Thread(target=worker)
     t.daemon = True
     t.start()
 VOD_CACHE_TTL = 21600
 SERIES_CACHE_TTL = 21600
 
-def _vod_cache_paths(dns):
-    h = _epg_server_hash(dns)
+def vod_cache_paths(dns):
+    h = epg_server_hash(dns)
     return {
         'movies': os.path.join(profile, 'vod_movies_{}.json'.format(h)),
         'series': os.path.join(profile, 'vod_series_{}.json'.format(h)),
     }
 
-def _load_catalog_cache(cache_path, dns, username, password, ttl):
-    cached = _safe_read_json(cache_path)
-    fp = _epg_fingerprint(dns, username, password)
+def load_catalog_cache(cache_path, dns, username, password, ttl):
+    cached = safe_read_json(cache_path)
+    fp = epg_fingerprint(dns, username, password)
     if cached.get('fingerprint') != fp:
         return None, cached
     fetched_at = int(cached.get('fetched_at') or 0)
@@ -666,19 +663,19 @@ def _load_catalog_cache(cache_path, dns, username, password, ttl):
     return items, cached
 
 def get_movies_catalog(dns, username, password, force=False):
-    paths = _vod_cache_paths(dns)
-    fp = _epg_fingerprint(dns, username, password)
+    paths = vod_cache_paths(dns)
+    fp = epg_fingerprint(dns, username, password)
     cached = {}
     if not force:
-        items, cached = _load_catalog_cache(paths['movies'], dns, username, password, VOD_CACHE_TTL)
+        items, cached = load_catalog_cache(paths['movies'], dns, username, password, VOD_CACHE_TTL)
         if items:
             return items
     else:
-        cached = _safe_read_json(paths['movies'])
+        cached = safe_read_json(paths['movies'])
     api = API(dns, username, password)
     items = api.all_movies()
     if items:
-        _safe_write_json(paths['movies'], {
+        safe_write_json(paths['movies'], {
             'fingerprint': fp,
             'fetched_at': int(time.time()),
             'items': items,
@@ -688,19 +685,19 @@ def get_movies_catalog(dns, username, password, force=False):
     return stale if isinstance(stale, list) else []
 
 def get_series_catalog(dns, username, password, force=False):
-    paths = _vod_cache_paths(dns)
-    fp = _epg_fingerprint(dns, username, password)
+    paths = vod_cache_paths(dns)
+    fp = epg_fingerprint(dns, username, password)
     cached = {}
     if not force:
-        items, cached = _load_catalog_cache(paths['series'], dns, username, password, SERIES_CACHE_TTL)
+        items, cached = load_catalog_cache(paths['series'], dns, username, password, SERIES_CACHE_TTL)
         if items:
             return items
     else:
-        cached = _safe_read_json(paths['series'])
+        cached = safe_read_json(paths['series'])
     api = API(dns, username, password)
     items = api.all_series()
     if items:
-        _safe_write_json(paths['series'], {
+        safe_write_json(paths['series'], {
             'fingerprint': fp,
             'fetched_at': int(time.time()),
             'items': items,
@@ -711,33 +708,33 @@ def get_series_catalog(dns, username, password, force=False):
 
 def refresh_vod_catalogs_background(dns, username, password):
     key = 'vod|{}'.format(dns)
-    with _EPG_ACTIVE_LOCK:
-        if key in _EPG_ACTIVE:
+    with EPG_ACTIVE_LOCK:
+        if key in EPG_ACTIVE:
             return
-        _EPG_ACTIVE.add(key)
-    def _worker():
+        EPG_ACTIVE.add(key)
+    def worker():
         try:
             get_movies_catalog(dns, username, password)
             get_series_catalog(dns, username, password)
         except Exception:
             pass
         finally:
-            with _EPG_ACTIVE_LOCK:
-                _EPG_ACTIVE.discard(key)
-    t = threading.Thread(target=_worker)
+            with EPG_ACTIVE_LOCK:
+                EPG_ACTIVE.discard(key)
+    t = threading.Thread(target=worker)
     t.daemon = True
     t.start()
 
 def load_epg_index(dns):
-    with _EPG_INDEX_LOCK:
-        cached = _EPG_INDEX_MEMORY.get(dns)
+    with EPG_INDEX_LOCK:
+        cached = EPG_INDEX_MEMORY.get(dns)
     if cached and (time.time() - cached[1]) < 300:
         return cached[0]
-    paths = _epg_paths(dns)
-    index = _safe_read_json(paths['index'])
+    paths = epg_paths(dns)
+    index = safe_read_json(paths['index'])
     if isinstance(index.get('channels'), dict) and index.get('version') == EPG_XML_INDEX_VERSION:
-        with _EPG_INDEX_LOCK:
-            _EPG_INDEX_MEMORY[dns] = (index, time.time())
+        with EPG_INDEX_LOCK:
+            EPG_INDEX_MEMORY[dns] = (index, time.time())
         return index
     return {}
 
@@ -862,12 +859,12 @@ class API:
         except Exception:
             pass
         return url
-    def _is_adult(self, name):
+    def is_adult(self, name):
         return any(s in name for s in self.adult_tags)
-    def _allow(self, name):
+    def allow(self, name):
         if self.hide_adult == 'false':
             return True
-        return not self._is_adult(name)
+        return not self.is_adult(name)
     def regex_from_to(self, text, from_string, to_string, excluding=True):
         try:
             if excluding:
@@ -956,7 +953,7 @@ class API:
         itens = []
         if not self.check_server_alive():
             return itens
-        _ensure_epg_background(self.dns, self.username, self.password)
+        ensure_epg_background(self.dns, self.username, self.password)
         if self.server_format == 'enigma2':
             xml_data = self.http('', 'channels_category')
             if not xml_data:
@@ -971,7 +968,7 @@ class API:
                         if name_elem is None or url_elem is None:
                             continue
                         name = clean_category_name(self.b64(name_elem.text))
-                        if not name or 'All' in name or not self._allow(name):
+                        if not name or 'All' in name or not self.allow(name):
                             continue
                         url = self.check_protocol(
                             url_elem.text.replace('<![CDATA[', '').replace(']]>', '')
@@ -991,7 +988,7 @@ class API:
                     try:
                         name = clean_category_name(cat.get('category_name', ''))
                         cat_id = cat.get('category_id', '')
-                        if not cat_id or not name or 'All' in name or not self._allow(name):
+                        if not cat_id or not name or 'All' in name or not self.allow(name):
                             continue
                         url = '{}&action=get_live_streams&category_id={}'.format(
                             self.player_api, cat_id
@@ -1004,7 +1001,7 @@ class API:
         return itens
     def channels_open(self, url):
         itens = []
-        _ensure_epg_background(self.dns, self.username, self.password)
+        ensure_epg_background(self.dns, self.username, self.password)
         if 'player_api.php' in url and 'action=get_live_streams' in url:
             json_data = self.http(url, 'json_url')
             if not json_data:
@@ -1122,7 +1119,7 @@ class API:
 
     def channels_open_epg(self, url):
         result = []
-        _ensure_epg_background(self.dns, self.username, self.password)
+        ensure_epg_background(self.dns, self.username, self.password)
         if 'player_api.php' in url and 'action=get_live_streams' in url:
             json_data = self.http(url, 'json_url')
             if not json_data:
@@ -1135,11 +1132,13 @@ class API:
                         continue
                     url_ = '{}{}.m3u8'.format(self.play_url, stream_id)
                     thumb = clean_text(stream.get('stream_icon', ''))
-                    programs = []
                     epg_channel_id = stream.get('epg_channel_id') or ''
-                    if epg_channel_id:
-                        programs = get_epg_programs(epg_channel_id, self.dns, limit=48)
-                    result.append({'name': name, 'icon': thumb, 'url': url_, 'programs': programs})
+                    result.append({
+                        'name': name, 'icon': thumb, 'url': url_,
+                        'programs': None,
+                        'epg_channel_id': epg_channel_id,
+                        'epg_dns': self.dns,
+                    })
                 except Exception:
                     continue
             if result:
@@ -1180,13 +1179,17 @@ class API:
                         thumb = di.text.replace('<![CDATA[ ', '').replace(' ]]>', '') if di is not None else ''
                     except Exception:
                         thumb = ''
-                    programs = []
+                    programs = None
+                    epg_channel_id = ''
                     if json_data and i < len(json_data):
                         stream = json_data[i]
                         epg_channel_id = stream.get('epg_channel_id') or ''
-                        if epg_channel_id:
-                            programs = get_epg_programs(epg_channel_id, self.dns, limit=48)
-                    result.append({'name': name, 'icon': thumb, 'url': url_, 'programs': programs})
+                    result.append({
+                        'name': name, 'icon': thumb, 'url': url_,
+                        'programs': programs,
+                        'epg_channel_id': epg_channel_id,
+                        'epg_dns': self.dns,
+                    })
                 except Exception:
                     continue
             if result:
@@ -1203,7 +1206,7 @@ class API:
         for cat in vod_cat:
             try:
                 name = clean_category_name(cat.get('category_name', ''))
-                if not name or not self._allow(name):
+                if not name or not self.allow(name):
                     continue
                 url = '{}&action=get_series&category_id={}'.format(
                     self.player_api, cat['category_id']
@@ -1334,7 +1337,7 @@ class API:
                 stream_id = m.get('stream_id')
                 if not name or not stream_id:
                     continue
-                if not self._allow(name):
+                if not self.allow(name):
                     continue
                 ext = clean_text(m.get('container_extension', '')) or 'mp4'
                 icon = clean_text(m.get('stream_icon', '') or m.get('cover', ''))
@@ -1383,7 +1386,7 @@ class API:
                 series_id = s.get('series_id')
                 if not name or not series_id:
                     continue
-                if not self._allow(name):
+                if not self.allow(name):
                     continue
                 cover = clean_text(s.get('cover', ''))
                 release = clean_text(first_clean_text(s, 'releaseDate', 'release_date') or '')
@@ -1448,7 +1451,7 @@ class API:
                             self.regex_from_to(a, '<playlist_url>', '</playlist_url>')
                             .replace('<![CDATA[', '').replace(']]>', '')
                         )
-                        if not name or 'All' in name or not self._allow(name):
+                        if not name or 'All' in name or not self.allow(name):
                             continue
                         itens.append(('dir', name, vod_url))
                     else:

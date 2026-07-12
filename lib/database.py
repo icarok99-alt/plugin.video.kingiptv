@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*-
+
 
 import sqlite3
 import threading
@@ -6,7 +6,7 @@ import xbmc
 from contextlib import contextmanager
 from datetime import datetime
 from lib.db_manager import (
-    _find_myvideos_db,
+    find_myvideos_db,
     get_kodi_watched,
     get_kodi_watched_season,
     set_kodi_watched,
@@ -19,12 +19,12 @@ from lib.db_manager import (
 )
 TABLE_EPISODES_METADATA = 'kingiptv_episodes_metadata'
 TABLE_SKIP_TIMESTAMPS = 'kingiptv_skip_timestamps'
-_init_lock = threading.Lock()
-_initialized_dbs = set()
+init_lock = threading.Lock()
+initialized_dbs = set()
 
-def _locate_myvideos_db(retries=10, delay=1.0):
+def locate_myvideos_db(retries=10, delay=1.0):
     for attempt in range(retries):
-        db_path = _find_myvideos_db()
+        db_path = find_myvideos_db()
         if db_path:
             return db_path
         xbmc.sleep(int(delay * 1000))
@@ -32,7 +32,7 @@ def _locate_myvideos_db(retries=10, delay=1.0):
 
 class KingDatabase:
     def __init__(self):
-        self.db_path = _locate_myvideos_db()
+        self.db_path = locate_myvideos_db()
         if not self.db_path:
             xbmc.log(
                 '[plugin.video.kingiptv] Não foi possível localizar o MyVideos*.db do Kodi. '
@@ -40,9 +40,9 @@ class KingDatabase:
                 xbmc.LOGWARNING
             )
         else:
-            self._init_database()
+            self.init_database()
     @contextmanager
-    def _get_connection(self):
+    def get_connection(self):
         if not self.db_path:
             raise RuntimeError('MyVideos*.db do Kodi indisponível.')
         conn = sqlite3.connect(self.db_path, timeout=15)
@@ -56,12 +56,12 @@ class KingDatabase:
             raise
         finally:
             conn.close()
-    def _init_database(self):
-        with _init_lock:
-            if self.db_path in _initialized_dbs:
+    def init_database(self):
+        with init_lock:
+            if self.db_path in initialized_dbs:
                 return
             try:
-                with self._get_connection() as conn:
+                with self.get_connection() as conn:
                     cursor = conn.cursor()
                     cursor.execute('''
                         CREATE TABLE IF NOT EXISTS {} (
@@ -101,14 +101,14 @@ class KingDatabase:
                         'CREATE INDEX IF NOT EXISTS idx_kingiptv_skip_imdb '
                         'ON {}(imdb_id)'.format(TABLE_SKIP_TIMESTAMPS)
                     )
-                _initialized_dbs.add(self.db_path)
+                initialized_dbs.add(self.db_path)
             except Exception:
                 pass
     def get_next_episode_metadata(self, imdb_id, current_season, current_episode):
         if not self.db_path:
             return None
         try:
-            with self._get_connection() as conn:
+            with self.get_connection() as conn:
                 cursor = conn.cursor()
                 cursor.execute('''
                     SELECT * FROM {}
@@ -139,7 +139,7 @@ class KingDatabase:
         if last_episode_num is None:
             last_episode_num = max([int(ep[0]) for ep in episodes_data])
         try:
-            with self._get_connection() as conn:
+            with self.get_connection() as conn:
                 cursor = conn.cursor()
                 batch_data = []
                 for episode_num, title, thumbnail, fanart, description in episodes_data:
@@ -182,7 +182,7 @@ class KingDatabase:
         if not self.db_path:
             return []
         try:
-            with self._get_connection() as conn:
+            with self.get_connection() as conn:
                 cursor = conn.cursor()
                 cursor.execute('''
                     SELECT * FROM {}
@@ -196,7 +196,7 @@ class KingDatabase:
         if not self.db_path:
             return None
         try:
-            with self._get_connection() as conn:
+            with self.get_connection() as conn:
                 cursor = conn.cursor()
                 cursor.execute('''
                     SELECT * FROM {}
@@ -220,7 +220,7 @@ class KingDatabase:
         if not self.db_path:
             return None
         try:
-            with self._get_connection() as conn:
+            with self.get_connection() as conn:
                 cursor = conn.cursor()
                 cursor.execute('''
                     SELECT intro_start, intro_end, source
@@ -244,7 +244,7 @@ class KingDatabase:
             return
         now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         try:
-            with self._get_connection() as conn:
+            with self.get_connection() as conn:
                 cursor = conn.cursor()
                 if source == 'manual':
                     cursor.execute('''
@@ -281,7 +281,7 @@ class KingDatabase:
         if not self.db_path:
             return False
         try:
-            with self._get_connection() as conn:
+            with self.get_connection() as conn:
                 cursor = conn.cursor()
                 cursor.execute(
                     'SELECT 1 FROM {} WHERE imdb_id = ? AND season = ? AND episode = ?'.format(TABLE_SKIP_TIMESTAMPS),
@@ -310,7 +310,7 @@ class KingDatabase:
         if not batch_data:
             return 0
         try:
-            with self._get_connection() as conn:
+            with self.get_connection() as conn:
                 cursor = conn.cursor()
                 if source == 'manual':
                     cursor.executemany('''
