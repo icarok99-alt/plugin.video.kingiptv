@@ -2,7 +2,6 @@
 
 import uuid
 import re
-import time
 import threading
 from datetime import datetime, timedelta, timezone
 from lib.helper import *
@@ -45,9 +44,8 @@ def build_session():
 
 SESSION = build_session()
 
-EPG_CACHE_TTL = 90  # segundos
-_epg_cache_lock = threading.Lock()
-_epg_cache = {'data': None, 'ts': 0.0}
+epg_cache_lock = threading.Lock()
+epg_cache = {'data': None, 'day': None}
 
 
 def parse_iso_datetime(s):
@@ -72,6 +70,9 @@ def parse_iso_datetime(s):
 
 def get_current_time():
     return datetime.now(timezone(timedelta(hours=-3)))
+
+def current_day_key():
+    return get_current_time().strftime('%Y-%m-%d')
 
 def playlist_pluto():
     channels_kodi = []
@@ -179,12 +180,11 @@ def playlist_pluto():
 
 
 def playlist_pluto_epg(force_refresh=False):
-    now_ts = time.time()
+    today = current_day_key()
     if not force_refresh:
-        with _epg_cache_lock:
-            cached = _epg_cache['data']
-            age = now_ts - _epg_cache['ts']
-            if cached is not None and age < EPG_CACHE_TTL:
+        with epg_cache_lock:
+            cached = epg_cache['data']
+            if cached is not None and epg_cache['day'] == today:
                 return cached
 
     result = []
@@ -295,8 +295,8 @@ def playlist_pluto_epg(force_refresh=False):
         log(f'playlist_pluto_epg: erro geral: {e}')
 
     if result:
-        with _epg_cache_lock:
-            _epg_cache['data'] = result
-            _epg_cache['ts'] = time.time()
+        with epg_cache_lock:
+            epg_cache['data'] = result
+            epg_cache['day'] = today
 
     return result
