@@ -1,9 +1,9 @@
-# -*- coding: utf-8 -*-
+
 
 import re
 import unicodedata
 from difflib import SequenceMatcher
-_NOISE_WORDS = {
+NOISE_WORDS = {
     'dublado', 'dub', 'legendado', 'leg', 'nacional', 'dual', 'audio',
     'hd', 'fhd', 'uhd', 'sd', '4k', '8k', 'hdr',
     'cam', 'ts', 'web', 'webrip', 'web-dl', 'webdl', 'bluray', 'blu', 'ray',
@@ -11,40 +11,36 @@ _NOISE_WORDS = {
     'multi', 'original', 'extended', 'directors', 'cut', 'uncut',
     'temporada', 'completa', 'serie', 'series',
 }
-_YEAR_RE = re.compile(r'\b((19|20)\d{2})\b')
-# Palavras "vazias" (artigos, preposições, conjunções) que não devem contar
-# como sinal de semelhança entre títulos. Sem isso, títulos totalmente
-# diferentes como "Mestres do Universo" e "Mestres do Assalto" ganham score
-# alto só por compartilharem "mestres" + "do".
-_STOPWORDS = {
+YEAR_RE = re.compile(r'\b((19|20)\d{2})\b')
+STOPWORDS = {
     'a', 'o', 'as', 'os', 'um', 'uma', 'uns', 'umas',
     'de', 'do', 'da', 'dos', 'das', 'em', 'no', 'na', 'nos', 'nas',
     'por', 'pra', 'para', 'com', 'sem', 'e', 'ou',
     'the', 'of', 'in', 'on', 'at', 'to', 'and', 'or',
 }
 
-def _strip_accents(text):
+def strip_accents(text):
     text = unicodedata.normalize('NFKD', text)
     return ''.join(ch for ch in text if not unicodedata.combining(ch))
 
 def normalize_title(text):
     if not text:
         return ''
-    text = _strip_accents(str(text)).lower()
+    text = strip_accents(str(text)).lower()
     text = re.sub(r'\[[^\]]*\]', ' ', text)
     text = re.sub(r'\([^)]*\)', ' ', text)
-    text = _YEAR_RE.sub(' ', text)
+    text = YEAR_RE.sub(' ', text)
     text = re.sub(r'[^a-z0-9 ]+', ' ', text)
-    words = [w for w in text.split() if w and w not in _NOISE_WORDS]
+    words = [w for w in text.split() if w and w not in NOISE_WORDS]
     return ' '.join(words).strip()
 
 def extract_year(text):
     if not text:
         return None
-    m = _YEAR_RE.search(str(text))
+    m = YEAR_RE.search(str(text))
     return m.group(1) if m else None
 
-def _word_overlap_score(sa, sb):
+def word_overlap_score(sa, sb):
     inter = sa & sb
     if not inter:
         return 0.0
@@ -61,11 +57,8 @@ def title_similarity(a, b):
         return 1.0
     ta = na.split()
     tb = nb.split()
-    # Remove stopwords antes de medir semelhança, senão palavras como "do"/
-    # "de"/"the" contam como "match" e mascaram títulos diferentes que só
-    # coincidem numa palavra comum + uma preposição.
-    fa = [w for w in ta if w not in _STOPWORDS]
-    fb = [w for w in tb if w not in _STOPWORDS]
+    fa = [w for w in ta if w not in STOPWORDS]
+    fb = [w for w in tb if w not in STOPWORDS]
     if fa and fb:
         ta, tb = fa, fb
     sa, sb = set(ta), set(tb)
@@ -74,7 +67,7 @@ def title_similarity(a, b):
     if min(len(sa), len(sb)) <= 1:
         return 0.0
     seq_score = SequenceMatcher(None, ta, tb, autojunk=False).ratio()
-    word_score = _word_overlap_score(sa, sb)
+    word_score = word_overlap_score(sa, sb)
     return (seq_score * 0.6) + (word_score * 0.4)
 
 def best_title_match(candidates, name_key, titles, year=None,
@@ -115,13 +108,8 @@ def best_title_match(candidates, name_key, titles, year=None,
             if cand_year:
                 year_matches = abs(cand_year - target_year) <= year_tolerance
             else:
-                # candidato sem ano conhecido: não zera por ano, mas passa a
-                # exigir um título muito mais forte (unknown_year_min_score)
                 required = unknown_year_min_score
                 year_matches = True
-            # O ano nunca pode resgatar um título fraco: o bônus só é somado
-            # se o título já bateu sozinho (raw_score >= required). Se o
-            # título OU o ano não baterem, zera na hora.
             title_matches = raw_score >= required
             if title_matches and year_matches:
                 score = min(1.0, raw_score + year_bonus) if cand_year else raw_score

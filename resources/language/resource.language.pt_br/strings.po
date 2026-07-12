@@ -245,3 +245,53 @@ msgstr "Cache limpo. Feche e abra o Kodi novamente para o banco de dados ser rec
 msgctxt "#32135"
 msgid "Nothing was found to clear."
 msgstr "Nada foi encontrado para limpar."
+
+msgctxt "#32136"
+msgid "PROGRAM GUIDE"
+msgstr "GUIA DE PROGRAMAÇÃO"
+
+
+msgctxt "#32137"
+msgid "PLEASE WAIT WHILE PLAYBACK STARTS..."
+msgstr "Aguarde enquanto a reprodução inicia..."
+
+# Skin hardcoded text strings (32138-32147)
+msgctxt "#32138"
+msgid "Choose the player"
+msgstr "Escolha o player"
+
+msgctxt "#32139"
+msgid "Press OK to select · Back to cancel"
+msgstr "Pressione OK para selecionar · Voltar para cancelar"
+
+msgctxt "#32140"
+msgid "NOW:"
+msgstr "AGORA:"
+
+msgctxt "#32141"
+msgid "Remaining"
+msgstr "Restam"
+
+msgctxt "#32142"
+msgid "min"
+msgstr "min"
+
+msgctxt "#32143"
+msgid "UPCOMING PROGRAMS"
+msgstr "PRÓXIMOS PROGRAMAS"
+
+msgctxt "#32144"
+msgid "WATCH"
+msgstr "ASSISTIR"
+
+msgctxt "#32145"
+msgid "UP/DOWN: NAVIGATE"
+msgstr "CIMA/BAIXO: NAVEGAR"
+
+msgctxt "#32146"
+msgid "LEFT/RIGHT: SWITCH PANEL"
+msgstr "ESQ/DIR: MUDAR PAINEL"
+
+msgctxt "#32147"
+msgid "BACK: CLOSE"
+msgstr "VOLTAR: FECHAR"

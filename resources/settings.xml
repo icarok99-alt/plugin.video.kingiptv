@@ -13,9 +13,6 @@
     <category label="32120">
         <setting id="autoplay_enabled" type="bool" label="32121" default="true"/>
     </category>
-    <category label="Proxy">
-        <setting id="proxy_port" type="number" label="Porta do Proxy Local" default="57845"/>
-    </category>
     <category label="32130">
         <setting label="32131" type="action" action="RunScript(special://home/addons/plugin.video.kingiptv/lib/db_manager.py,clear_all)" option="close"/>
     </category>
