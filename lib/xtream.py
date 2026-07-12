@@ -421,6 +421,10 @@ def safe_write_json(path, data):
 def epg_fingerprint(dns, username, password):
     return '{}|{}|{}'.format(dns, username, password)
 
+def current_day_key():
+    tz = datetime.timezone(datetime.timedelta(hours=-3))
+    return datetime.datetime.now(tz).strftime('%Y-%m-%d')
+
 def epg_xml_fresh(dns, username, password):
     paths = epg_paths(dns)
     meta = safe_read_json(paths['meta'])
@@ -428,6 +432,8 @@ def epg_xml_fresh(dns, username, password):
         return False
     fetched_at = int(meta.get('fetched_at') or 0)
     if not fetched_at or (time.time() - fetched_at) >= EPG_XML_TTL:
+        return False
+    if meta.get('day') != current_day_key():
         return False
     try:
         return os.path.exists(paths['xml']) and os.path.getsize(paths['xml']) > 128
@@ -443,6 +449,8 @@ def epg_index_fresh(dns, username, password):
         return False
     generated_at = int(index.get('generated_at') or 0)
     if not generated_at or (time.time() - generated_at) >= EPG_XML_TTL:
+        return False
+    if index.get('day') != current_day_key():
         return False
     channels = index.get('channels')
     if not isinstance(channels, dict) or not channels:
@@ -489,6 +497,7 @@ def download_epg_xml(dns, username, password):
             safe_write_json(paths['meta'], {
                 'fingerprint': epg_fingerprint(dns, username, password),
                 'fetched_at': int(time.time()),
+                'day': current_day_key(),
                 'size': len(content),
             })
             try:
@@ -602,6 +611,7 @@ def build_epg_index(dns, username, password):
             'version': EPG_XML_INDEX_VERSION,
             'fingerprint': epg_fingerprint(dns, username, password),
             'generated_at': int(time.time()),
+            'day': current_day_key(),
             'window_start': window_start,
             'window_end': window_end,
             'channels': channels,
@@ -639,8 +649,8 @@ def ensure_epg_background(dns, username, password):
     t = threading.Thread(target=worker)
     t.daemon = True
     t.start()
-VOD_CACHE_TTL = 21600
-SERIES_CACHE_TTL = 21600
+VOD_CACHE_TTL = 86400
+SERIES_CACHE_TTL = 86400
 
 def vod_cache_paths(dns):
     h = epg_server_hash(dns)
@@ -660,6 +670,8 @@ def load_catalog_cache(cache_path, dns, username, password, ttl):
         return None, cached
     if (time.time() - fetched_at) >= ttl:
         return None, cached
+    if cached.get('day') != current_day_key():
+        return None, cached
     return items, cached
 
 def get_movies_catalog(dns, username, password, force=False):
@@ -678,6 +690,7 @@ def get_movies_catalog(dns, username, password, force=False):
         safe_write_json(paths['movies'], {
             'fingerprint': fp,
             'fetched_at': int(time.time()),
+            'day': current_day_key(),
             'items': items,
         })
         return items
@@ -700,6 +713,7 @@ def get_series_catalog(dns, username, password, force=False):
         safe_write_json(paths['series'], {
             'fingerprint': fp,
             'fetched_at': int(time.time()),
+            'day': current_day_key(),
             'items': items,
         })
         return items
