@@ -152,7 +152,6 @@ def index_iptv():
     active = list_manager.get_active_list()
     addMenuItem({'name': TITULO, 'description': ''}, destiny='')
     
-    # Se houver uma lista ativa, inicia o download do EPG em segundo plano
     if active:
         dns = active['dns']
         username = active['username']
@@ -203,7 +202,6 @@ def prompt_select_list():
     label = labels[choice]
     list_manager.set_active_list(dns, username, password, label)
     notify('Lista IPTV definida com sucesso')
-    # Nenhum download aqui, será feito em index_iptv ao recarregar a tela inicial
 
 @route('/')
 def index():
@@ -229,7 +227,6 @@ def live_categories():
     dns = active['dns']
     username = active['username']
     password = active['password']
-    # As categorias são obtidas com cache (já implementado em xtream.API.channels_category)
     cat = xtream.API(dns, username, password).channels_category()
     if cat:
         for i in cat:
