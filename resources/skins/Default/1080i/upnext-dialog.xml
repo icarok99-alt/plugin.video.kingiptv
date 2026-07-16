@@ -40,7 +40,7 @@
                 <height>35</height>
                 <font>font14</font>
                 <textcolor>FFFFFFFF</textcolor>
-                <label>$ADDON[plugin.video.kingiptv 32107]</label>
+                <label>Próximo Episódio</label>
             </control>
             
             <control type="label" id="3003">
@@ -71,7 +71,7 @@
                 <posy>235</posy>
                 <width>285</width>
                 <height>50</height>
-                <label>$ADDON[plugin.video.kingiptv 32108]</label>
+                <label>Reproduzir ({0}s)</label>
                 <font>font13</font>
                 <textcolor>FFFFFFFF</textcolor>
                 <focusedcolor>FFFFFFFF</focusedcolor>
@@ -88,7 +88,7 @@
                 <posy>235</posy>
                 <width>285</width>
                 <height>50</height>
-                <label>$ADDON[plugin.video.kingiptv 32109]</label>
+                <label>Cancelar</label>
                 <font>font13</font>
                 <textcolor>FFFFFFFF</textcolor>
                 <focusedcolor>FFFFFFFF</focusedcolor>

@@ -34,11 +34,7 @@ class KingDatabase:
     def __init__(self):
         self.db_path = locate_myvideos_db()
         if not self.db_path:
-            xbmc.log(
-                '[plugin.video.kingiptv] Não foi possível localizar o MyVideos*.db do Kodi. '
-                'Skip Intro e UpNext ficarão indisponíveis nesta sessão.',
-                xbmc.LOGWARNING
-            )
+            pass
         else:
             self.init_database()
     @contextmanager

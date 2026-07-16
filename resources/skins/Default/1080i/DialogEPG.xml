@@ -65,7 +65,7 @@
                 <aligny>center</aligny>
                 <font>font15_title</font>
                 <textcolor>FFF3B73B</textcolor>
-                <label>$INFO[Window(Home).Property(epg.header)]  |  $ADDON[plugin.video.kingiptv 32136]</label>
+                <label>$INFO[Window(Home).Property(epg.header)]  |  GUIA DE PROGRAMAÇÃO</label>
             </control>
 
             <control type="label">
@@ -233,7 +233,7 @@
                 <height>36</height>
                 <font>font13</font>
                 <textcolor>FFF3B73B</textcolor>
-                <label>$ADDON[plugin.video.kingiptv 32140] $INFO[Window(Home).Property(epg.current.title)]</label>
+                <label>AGORA: $INFO[Window(Home).Property(epg.current.title)]</label>
                 <visible>!String.IsEmpty(Window(Home).Property(epg.current.title))</visible>
             </control>
 
@@ -256,7 +256,7 @@
                 <align>right</align>
                 <font>font12</font>
                 <textcolor>FF9A9A9A</textcolor>
-                <label>$ADDON[plugin.video.kingiptv 32141] $INFO[Window(Home).Property(epg.current.remaining)] $ADDON[plugin.video.kingiptv 32142]</label>
+                <label>Restam $INFO[Window(Home).Property(epg.current.remaining)] min</label>
                 <visible>!String.IsEmpty(Window(Home).Property(epg.current.remaining))</visible>
             </control>
 
@@ -306,7 +306,7 @@
                 <height>36</height>
                 <font>font13</font>
                 <textcolor>FFF3B73B</textcolor>
-                <label>$ADDON[plugin.video.kingiptv 32143]</label>
+                <label>PRÓXIMOS PROGRAMAS</label>
             </control>
 
             <control type="list" id="3002">
@@ -410,7 +410,7 @@
                     <aligny>center</aligny>
                     <font>font12</font>
                     <textcolor>FFE6E6E6</textcolor>
-                    <label>$ADDON[plugin.video.kingiptv 32144]</label>
+                    <label>ASSISTIR</label>
                 </control>
             </control>
 
@@ -439,7 +439,7 @@
                     <aligny>center</aligny>
                     <font>font12</font>
                     <textcolor>FFE6E6E6</textcolor>
-                    <label>$ADDON[plugin.video.kingiptv 32145]</label>
+                    <label>CIMA/BAIXO: NAVEGAR</label>
                 </control>
             </control>
 
@@ -468,7 +468,7 @@
                     <aligny>center</aligny>
                     <font>font12</font>
                     <textcolor>FFE6E6E6</textcolor>
-                    <label>$ADDON[plugin.video.kingiptv 32146]</label>
+                    <label>ESQ/DIR: MUDAR PAINEL</label>
                 </control>
             </control>
 
@@ -490,7 +490,7 @@
                     <aligny>center</aligny>
                     <font>font12</font>
                     <textcolor>FFE6E6E6</textcolor>
-                    <label>$ADDON[plugin.video.kingiptv 32147]</label>
+                    <label>VOLTAR: FECHAR</label>
                 </control>
             </control>
         </control>

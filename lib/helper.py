@@ -78,13 +78,11 @@ try:
     addon = xbmcaddon.Addon()
     addonName = addon.getAddonInfo('name')
     addonVersion = addon.getAddonInfo('version')
-    localLang = addon.getLocalizedString
     homeDir = addon.getAddonInfo('path')
     translate = xbmcvfs.translatePath if six.PY3 else xbmc.translatePath
     addonIcon = translate(os.path.join(homeDir, 'icon.png'))
     addonFanart = translate(os.path.join(homeDir, 'fanart.jpg'))
     profile = translate(addon.getAddonInfo('profile'))
-    kversion = int(xbmc.getInfoLabel('System.BuildVersion').split(".")[0])
     plugin = sys.argv[0]
     base = plugin
     handle = int(sys.argv[1])
@@ -190,13 +188,6 @@ def select(name,items):
     op = dialog_.select(name, items)
     return op
 
-def log(txt):
-    try:
-        message = ''.join([addonName, ' : ', txt])
-        xbmc.log(msg=message, level=xbmc.LOGDEBUG)
-    except:
-        pass
-
 def string_utf8(string):
     if isinstance(string, bytes):
         return string
@@ -282,81 +273,44 @@ def addMenuItem(params={}, destiny='', exclude_from_url=None):
     li=xbmcgui.ListItem(name)
     iconimage = iconimage if iconimage else addonIcon
     li.setArt({"icon": "DefaultVideo.png", "thumb": iconimage})
-    if kversion > 19:
-        info = li.getVideoInfoTag()
-        info.setTitle(name)
-        info.setPlot(description)
-        infotag = True
-    else:
-        li.setInfo(type="Video", infoLabels={"Title": name, "Plot": description})
-        infotag = False
+    info = li.getVideoInfoTag()
+    info.setTitle(name)
+    info.setPlot(description)
     if year:
-        if infotag:
-            info.setYear(int(year))
-        else:
-            li.setInfo('video', {'year': int(year)})
+        info.setYear(int(year))
     if codec:
-        if infotag:
-            info.addVideoStream(xbmc.VideoStreamDetail(codec='h264'))
-        else:
-            li.addStreamInfo('video', {'codec': codec})
+        info.addVideoStream(xbmc.VideoStreamDetail(codec='h264'))
     if duration:
-        if infotag:
-            info.setDuration(int(duration))
-        else:
-            li.setInfo('video', {'duration': int(duration)})
+        info.setDuration(int(duration))
     if originaltitle:
-        if infotag:
-            info.setOriginalTitle(str(originaltitle))
-        else:
-            li.setInfo('video', {'originaltitle': str(originaltitle) })
+        info.setOriginalTitle(str(originaltitle))
     if imdbnumber:
-        if infotag:
-            info.setIMDBNumber(str(imdbnumber))
-        else:
-            li.setInfo('video', {'imdbnumber': str(imdbnumber)})
+        info.setIMDBNumber(str(imdbnumber))
     if aired:
-        if infotag:
-            info.setFirstAired(str(aired))
-        else:
-            li.setInfo('video', {'aired': str(aired)})
+        info.setFirstAired(str(aired))
     if genre:
-        if infotag:
-            info.setGenres([str(genre)])
-        else:
-            li.setInfo('video', {'genre': str(genre)})
+        info.setGenres([str(genre)])
     if mediatype:
-        if infotag:
-            info.setMediaType(str(mediatype))
-        else:
-            li.setInfo('video', {'mediatype': str(mediatype)})
+        info.setMediaType(str(mediatype))
     if tvshowtitle or serie_name:
-        if infotag:
-            info.setTvShowTitle(str(tvshowtitle or serie_name))
-        else:
-            li.setInfo('video', {'tvshowtitle': str(tvshowtitle or serie_name)})
+        info.setTvShowTitle(str(tvshowtitle or serie_name))
     playcount = params.get('playcount', None)
     if playcount is not None:
-        if infotag:
-            info.setPlaycount(int(playcount))
-        else:
-            li.setInfo('video', {'playcount': int(playcount)})
+        info.setPlaycount(int(playcount))
     season_num = params.get('season_num', season)
     episode_num = params.get('episode_num', episode)
     if season_num:
-        if infotag:
-            info.setSeason(int(season_num))
-        else:
-            li.setInfo('video', {'season': int(season_num)})
+        info.setSeason(int(season_num))
     if episode_num:
-        if infotag:
-            info.setEpisode(int(episode_num))
-        else:
-            li.setInfo('video', {'episode': int(episode_num)})
+        info.setEpisode(int(episode_num))
     is_playable = bool(playable and playable != 'false')
     is_folder = not is_playable
     if is_playable:
         li.setProperty('IsPlayable', 'true')
+        try:
+            info.setResumePoint(0, 0)
+        except Exception:
+            pass
     if fanart:
         li.setProperty('fanart_image', fanart)
     else:
@@ -386,64 +340,29 @@ def play_video(params):
     li=xbmcgui.ListItem(name)
     iconimage = iconimage if iconimage else ''
     li.setArt({"icon": "DefaultVideo.png", "thumb": iconimage})
-    if kversion > 19:
-        info = li.getVideoInfoTag()
-        info.setTitle(name)
-        info.setPlot(description)
-        infotag = True
-    else:
-        li.setInfo(type="Video", infoLabels={"Title": name, "Plot": description})
-        infotag = False
+    info = li.getVideoInfoTag()
+    info.setTitle(name)
+    info.setPlot(description)
     if year:
-        if infotag:
-            info.setYear(int(year))
-        else:
-            li.setInfo('video', {'year': int(year)})
+        info.setYear(int(year))
     if codec:
-        if infotag:
-            info.addVideoStream(xbmc.VideoStreamDetail(codec='h264'))
-        else:
-            li.addStreamInfo('video', {'codec': codec})
+        info.addVideoStream(xbmc.VideoStreamDetail(codec='h264'))
     if duration:
-        if infotag:
-            info.setDuration(int(duration))
-        else:
-            li.setInfo('video', {'duration': int(duration)})
+        info.setDuration(int(duration))
     if originaltitle:
-        if infotag:
-            info.setOriginalTitle(str(originaltitle))
-        else:
-            li.setInfo('video', {'originaltitle': str(originaltitle) })
+        info.setOriginalTitle(str(originaltitle))
     if imdbnumber:
-        if infotag:
-            info.setIMDBNumber(str(imdbnumber))
-        else:
-            li.setInfo('video', {'imdbnumber': str(imdbnumber)})
+        info.setIMDBNumber(str(imdbnumber))
     if aired:
-        if infotag:
-            info.setFirstAired(str(aired))
-        else:
-            li.setInfo('video', {'aired': str(aired)})
+        info.setFirstAired(str(aired))
     if genre:
-        if infotag:
-            info.setGenres([str(genre)])
-        else:
-            li.setInfo('video', {'genre': str(genre)})
+        info.setGenres([str(genre)])
     if season:
-        if infotag:
-            info.setSeason(int(season))
-        else:
-            li.setInfo('video', {'season': int(season)})
+        info.setSeason(int(season))
     if episode:
-        if infotag:
-            info.setEpisode(int(episode))
-        else:
-            li.setInfo('video', {'episode': int(episode)})
+        info.setEpisode(int(episode))
     if mediatype:
-        if infotag:
-            info.setMediaType(str(mediatype))
-        else:
-            li.setInfo('video', {'mediatype': str(mediatype)})
+        info.setMediaType(str(mediatype))
     if fanart:
         li.setProperty('fanart_image', fanart)
     else:

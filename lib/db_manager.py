@@ -395,11 +395,10 @@ if __name__ == '__main__':
         import xbmcgui
         import xbmcaddon
         addon = xbmcaddon.Addon('plugin.video.kingiptv')
-        getString = addon.getLocalizedString
-        confirmed = xbmcgui.Dialog().yesno(getString(32132), getString(32133))
+        confirmed = xbmcgui.Dialog().yesno('Limpar cache de vídeos do Kodi?', 'Isso vai apagar o banco de dados de vídeos do Kodi (status de assistido e progresso de TODAS as fontes/addons, não só do kingIPTV) e o cache de miniaturas (Thumbnails). Depois de limpar, é preciso fechar e abrir o Kodi novamente para o banco de dados ser recriado. Esta ação não pode ser desfeita. Deseja continuar?')
         if confirmed:
             deleted_files, thumbnails_cleared, _errors = clear_kodi_video_cache()
             if deleted_files or thumbnails_cleared:
-                xbmcgui.Dialog().notification(addon.getAddonInfo('name'), getString(32134), xbmcgui.NOTIFICATION_INFO, 4000)
+                xbmcgui.Dialog().notification(addon.getAddonInfo('name'), 'Cache limpo. Feche e abra o Kodi novamente para o banco de dados ser recriado.', xbmcgui.NOTIFICATION_INFO, 4000)
             else:
-                xbmcgui.Dialog().notification(addon.getAddonInfo('name'), getString(32135), xbmcgui.NOTIFICATION_WARNING, 4000)
+                xbmcgui.Dialog().notification(addon.getAddonInfo('name'), 'Nada foi encontrado para limpar.', xbmcgui.NOTIFICATION_WARNING, 4000)

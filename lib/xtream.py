@@ -33,6 +33,10 @@ EPG_HEADER_COLOR = 'gold'
 EPG_CURRENT_COLOR = 'gold'
 EPG_SCHEDULE_COLOR = 'gray'
 
+CATEGORY_CACHE = {}
+CATEGORY_CACHE_TTL = 3600
+CATEGORY_CACHE_LOCK = threading.Lock()
+
 def color(text, color_name=None):
     if not text:
         return ''
@@ -720,25 +724,6 @@ def get_series_catalog(dns, username, password, force=False):
     stale = cached.get('items') if isinstance(cached, dict) else None
     return stale if isinstance(stale, list) else []
 
-def refresh_vod_catalogs_background(dns, username, password):
-    key = 'vod|{}'.format(dns)
-    with EPG_ACTIVE_LOCK:
-        if key in EPG_ACTIVE:
-            return
-        EPG_ACTIVE.add(key)
-    def worker():
-        try:
-            get_movies_catalog(dns, username, password)
-            get_series_catalog(dns, username, password)
-        except Exception:
-            pass
-        finally:
-            with EPG_ACTIVE_LOCK:
-                EPG_ACTIVE.discard(key)
-    t = threading.Thread(target=worker)
-    t.daemon = True
-    t.start()
-
 def load_epg_index(dns):
     with EPG_INDEX_LOCK:
         cached = EPG_INDEX_MEMORY.get(dns)
@@ -855,20 +840,15 @@ class API:
         self.play_url = '{}/live/{}/{}/'.format(dns, username, password)
         self.play_movies = '{}/movie/{}/{}/'.format(dns, username, password)
         self.play_series = '{}/series/{}/{}/'.format(dns, username, password)
-        self.live_url = '{}/enigma2.php?username={}&password={}&type=get_live_categories'.format(dns, username, password)
-        self.vod_url = '{}/enigma2.php?username={}&password={}&type=get_vod_categories'.format(dns, username, password)
-        self.series_url = '{}/enigma2.php?username={}&password={}&type=get_series_categories'.format(dns, username, password)
         self.adult_tags = ['xxx', 'xXx', 'XXX', 'adult', 'Adult', 'ADULT',
                            'porn', 'Porn', 'PORN', 'teste', 'TESTE', 'Teste']
         self.hide_adult = hide_adult
-        self.server_alive = None
-        self.server_format = None
         self.session = create_session()
     def b64(self, obj):
         return decode_b64_safe(obj)
     def check_protocol(self, url):
         try:
-            if urlparse(self.live_url).scheme == 'https':
+            if urlparse(self.player_api).scheme == 'https':
                 return url.replace('http://', 'https://')
         except Exception:
             pass
@@ -879,63 +859,10 @@ class API:
         if self.hide_adult == 'false':
             return True
         return not self.is_adult(name)
-    def regex_from_to(self, text, from_string, to_string, excluding=True):
-        try:
-            if excluding:
-                return re.search(r'(?i)' + from_string + r'([\S\s]+?)' + to_string, text).group(1)
-            return re.search(r'(?i)(' + from_string + r'[\S\s]+?' + to_string + r')', text).group(1)
-        except Exception:
-            return ''
-    def regex_get_all(self, text, start_with, end_with):
-        try:
-            return re.findall(r'(?i)(' + start_with + r'[\S\s]+?' + end_with + r')', text)
-        except Exception:
-            return []
-    def check_server_alive(self):
-        if self.server_alive is not None:
-            return self.server_alive
-        try:
-            r = self.session.get(self.player_api, timeout=10, allow_redirects=False)
-            if r.status_code == 200:
-                self.server_alive = True
-                self.server_format = 'xtream'
-                try:
-                    r2 = requests.get(self.live_url, timeout=3,
-                                      headers={'User-Agent': BROWSER_UA},
-                                      allow_redirects=False)
-                    if r2.status_code == 200:
-                        self.server_format = 'enigma2'
-                except Exception:
-                    pass
-                return True
-        except Exception:
-            pass
-        try:
-            r = self.session.get(self.live_url, timeout=10, allow_redirects=False)
-            if r.status_code == 200:
-                self.server_alive = True
-                self.server_format = 'enigma2'
-                return True
-        except Exception:
-            pass
-        self.server_alive = False
-        self.server_format = None
-        log_iptv_problem(self.dns, 'Servidor não responde')
-        CACHE_FAILED_URLS[self.dns] = time.time()
-        return False
     def http(self, url='', mode=None):
-        if not self.check_server_alive():
-            return '' if mode != 'json_url' else None
         try:
             if not mode:
                 r = self.session.get(url, timeout=REQUEST_TIMEOUT)
-                if r.status_code != 200:
-                    raise requests.exceptions.HTTPError('HTTP {}'.format(r.status_code))
-                return r.content
-            elif mode == 'channels_category':
-                if self.server_format != 'enigma2':
-                    return ''
-                r = self.session.get(self.live_url, timeout=REQUEST_TIMEOUT)
                 if r.status_code != 200:
                     raise requests.exceptions.HTTPError('HTTP {}'.format(r.status_code))
                 return r.content
@@ -944,272 +871,67 @@ class API:
                 if r.status_code != 200:
                     raise requests.exceptions.HTTPError('HTTP {}'.format(r.status_code))
                 return r.json()
-            elif mode == 'vod':
-                if self.server_format != 'enigma2':
-                    return ''
-                r = self.session.get(url, timeout=REQUEST_TIMEOUT)
-                if r.status_code != 200:
-                    raise requests.exceptions.HTTPError('HTTP {}'.format(r.status_code))
-                return r.text
         except Exception as e:
-            log_iptv_problem(url or self.live_url, 'Erro HTTP: {}'.format(e))
-            CACHE_FAILED_URLS[url or self.live_url] = time.time()
+            log_iptv_problem(url or self.player_api, 'Erro HTTP: {}'.format(e))
+            CACHE_FAILED_URLS[url or self.player_api] = time.time()
         return '' if mode != 'json_url' else None
-    def channel_id(self, json_data, n):
-        if json_data and isinstance(json_data, list):
-            try:
-                if n < len(json_data):
-                    return json_data[n].get('stream_id', '')
-            except Exception:
-                pass
-        return ''
     def channels_category(self):
+        cache_key = '{}|{}|{}'.format(self.dns, self.username, self.password)
+        with CATEGORY_CACHE_LOCK:
+            cached = CATEGORY_CACHE.get(cache_key)
+            if cached and (time.time() - cached['timestamp']) < CATEGORY_CACHE_TTL:
+                return cached['data']
         itens = []
-        if not self.check_server_alive():
-            return itens
-        ensure_epg_background(self.dns, self.username, self.password)
-        if self.server_format == 'enigma2':
-            xml_data = self.http('', 'channels_category')
-            if not xml_data:
-                return itens
-            try:
-                root = ET.fromstring(xml_data)
-                channels = root.findall('channel')
-                for channel in channels:
-                    try:
-                        name_elem = channel.find('title')
-                        url_elem = channel.find('playlist_url')
-                        if name_elem is None or url_elem is None:
-                            continue
-                        name = clean_category_name(self.b64(name_elem.text))
-                        if not name or 'All' in name or not self.allow(name):
-                            continue
-                        url = self.check_protocol(
-                            url_elem.text.replace('<![CDATA[', '').replace(']]>', '')
-                        )
-                        itens.append((name, url))
-                    except Exception:
-                        continue
-            except Exception as e:
-                log_iptv_problem(self.live_url, 'Erro ao parsear categorias XML: {}'.format(e))
-        elif self.server_format == 'xtream':
-            url_cat = '{}&action=get_live_categories'.format(self.player_api)
-            categories = self.http(url_cat, 'json_url')
-            if not categories:
-                return itens
-            try:
-                for cat in categories:
-                    try:
-                        name = clean_category_name(cat.get('category_name', ''))
-                        cat_id = cat.get('category_id', '')
-                        if not cat_id or not name or 'All' in name or not self.allow(name):
-                            continue
-                        url = '{}&action=get_live_streams&category_id={}'.format(
-                            self.player_api, cat_id
-                        )
-                        itens.append((name, url))
-                    except Exception:
-                        continue
-            except Exception as e:
-                log_iptv_problem(url_cat, 'Erro ao processar categorias: {}'.format(e))
-        return itens
-    def channels_open(self, url):
-        itens = []
-        ensure_epg_background(self.dns, self.username, self.password)
-        if 'player_api.php' in url and 'action=get_live_streams' in url:
-            json_data = self.http(url, 'json_url')
-            if not json_data:
-                return itens
-            try:
-                for stream in json_data:
-                    try:
-                        name = clean_channel_name(stream.get('name', '') or '')
-                        stream_id = stream.get('stream_id')
-                        if not stream_id:
-                            continue
-                        url_ = '{}{}.m3u8'.format(self.play_url, stream_id)
-                        thumb = clean_text(stream.get('stream_icon', ''))
-                        epg_title_raw = stream.get('epg_title') or ''
-                        if epg_title_raw:
-                            epg_title_clean = decode_b64_safe(epg_title_raw).strip()
-                            if epg_title_clean:
-                                display_name = '{} - {}'.format(name, color(epg_title_clean, 'gold'))
-                            else:
-                                display_name = name
-                        else:
-                            display_name = name
-                        desc = ''
-                        epg_channel_id = stream.get('epg_channel_id') or ''
-                        if epg_channel_id:
-                            programs = get_epg_programs(epg_channel_id, self.dns)
-                            if programs:
-                                current, nextp = epg_lookup_current_next(programs)
-                                epg_desc = build_epg_desc(
-                                    current=current,
-                                    nextp=nextp,
-                                    day_schedule=programs,
-                                )
-                                if epg_desc:
-                                    desc = epg_desc
-                                    if current:
-                                        t = str(current.get('title') or '').strip()
-                                        if t:
-                                            display_name = '{} - {}'.format(name, color(t, 'gold'))
-                        itens.append((display_name, url_, thumb, desc))
-                    except Exception:
-                        continue
-                if itens:
-                    itens = sorted(itens, key=lambda x: x[0].lower())
-            except Exception as e:
-                log_iptv_problem(url, 'Erro ao processar streams: {}'.format(e))
+        url_cat = '{}&action=get_live_categories'.format(self.player_api)
+        categories = self.http(url_cat, 'json_url')
+        if not categories:
             return itens
         try:
-            chan_id = url.split('cat_id=')[1].split('&')[0]
-        except Exception:
-            try:
-                chan_id = url.split('category_id=')[1].split('&')[0]
-            except Exception:
-                chan_id = ''
-        if not chan_id:
-            return itens
-        xml_data = self.http(url)
-        if not xml_data:
-            return itens
-        try:
-            url_json = '{}&action=get_live_streams&category_id={}'.format(self.player_api, chan_id)
-            json_data = self.http(url_json, 'json_url')
-            root = ET.fromstring(xml_data)
-            channels = root.findall('channel')
-            if not channels:
-                return itens
-            for i, channel in enumerate(channels):
+            for cat in categories:
                 try:
-                    title_elem = channel.find('title')
-                    if title_elem is None:
+                    name = clean_category_name(cat.get('category_name', ''))
+                    cat_id = cat.get('category_id', '')
+                    if not cat_id or not name or 'All' in name or not self.allow(name):
                         continue
-                    name = clean_channel_name(self.b64(title_elem.text))
-                    stream_id = self.channel_id(json_data, i)
-                    if not stream_id:
-                        continue
-                    url_ = '{}{}.m3u8'.format(self.play_url, stream_id)
-                    try:
-                        di = channel.find('desc_image')
-                        thumb = di.text.replace('<![CDATA[ ', '').replace(' ]]>', '') if di is not None else ''
-                    except Exception:
-                        thumb = ''
-                    display_name = name
-                    desc = ''
-                    if json_data and i < len(json_data):
-                        stream = json_data[i]
-                        epg_title_raw = stream.get('epg_title') or ''
-                        if epg_title_raw:
-                            epg_title_clean = decode_b64_safe(epg_title_raw).strip()
-                            if epg_title_clean:
-                                display_name = '{} - {}'.format(name, color(epg_title_clean, 'gold'))
-                        epg_channel_id = stream.get('epg_channel_id') or ''
-                        if epg_channel_id:
-                            programs = get_epg_programs(epg_channel_id, self.dns)
-                            if programs:
-                                current, nextp = epg_lookup_current_next(programs)
-                                epg_desc = build_epg_desc(
-                                    current=current,
-                                    nextp=nextp,
-                                    day_schedule=programs,
-                                )
-                                if epg_desc:
-                                    desc = epg_desc
-                                if current:
-                                    t = str(current.get('title') or '').strip()
-                                    if t:
-                                        display_name = '{} - {}'.format(name, color(t, 'gold'))
-                    itens.append((display_name, url_, thumb, desc))
+                    url = '{}&action=get_live_streams&category_id={}'.format(
+                        self.player_api, cat_id
+                    )
+                    itens.append((name, url))
                 except Exception:
                     continue
-            if itens:
-                itens = sorted(itens, key=lambda x: x[0].lower())
         except Exception as e:
-            log_iptv_problem(url, 'Erro ao abrir canais: {}'.format(e))
+            log_iptv_problem(url_cat, 'Erro ao processar categorias: {}'.format(e))
+        if itens:
+            with CATEGORY_CACHE_LOCK:
+                CATEGORY_CACHE[cache_key] = {
+                    'data': itens,
+                    'timestamp': time.time()
+                }
         return itens
-
     def channels_open_epg(self, url):
         result = []
-        ensure_epg_background(self.dns, self.username, self.password)
-        if 'player_api.php' in url and 'action=get_live_streams' in url:
-            json_data = self.http(url, 'json_url')
-            if not json_data:
-                return result
-            for stream in json_data:
-                try:
-                    name = clean_channel_name(stream.get('name', '') or '')
-                    stream_id = stream.get('stream_id')
-                    if not stream_id:
-                        continue
-                    url_ = '{}{}.m3u8'.format(self.play_url, stream_id)
-                    thumb = clean_text(stream.get('stream_icon', ''))
-                    epg_channel_id = stream.get('epg_channel_id') or ''
-                    result.append({
-                        'name': name, 'icon': thumb, 'url': url_,
-                        'programs': None,
-                        'epg_channel_id': epg_channel_id,
-                        'epg_dns': self.dns,
-                    })
-                except Exception:
-                    continue
-            if result:
-                result = sorted(result, key=lambda x: x['name'].lower())
+        json_data = self.http(url, 'json_url')
+        if not json_data:
             return result
-
-        try:
-            chan_id = url.split('cat_id=')[1].split('&')[0]
-        except Exception:
+        for stream in json_data:
             try:
-                chan_id = url.split('category_id=')[1].split('&')[0]
-            except Exception:
-                chan_id = ''
-        if not chan_id:
-            return result
-        xml_data = self.http(url)
-        if not xml_data:
-            return result
-        try:
-            url_json = '{}&action=get_live_streams&category_id={}'.format(self.player_api, chan_id)
-            json_data = self.http(url_json, 'json_url')
-            root = ET.fromstring(xml_data)
-            channels = root.findall('channel')
-            if not channels:
-                return result
-            for i, channel in enumerate(channels):
-                try:
-                    title_elem = channel.find('title')
-                    if title_elem is None:
-                        continue
-                    name = clean_channel_name(self.b64(title_elem.text))
-                    stream_id = self.channel_id(json_data, i)
-                    if not stream_id:
-                        continue
-                    url_ = '{}{}.m3u8'.format(self.play_url, stream_id)
-                    try:
-                        di = channel.find('desc_image')
-                        thumb = di.text.replace('<![CDATA[ ', '').replace(' ]]>', '') if di is not None else ''
-                    except Exception:
-                        thumb = ''
-                    programs = None
-                    epg_channel_id = ''
-                    if json_data and i < len(json_data):
-                        stream = json_data[i]
-                        epg_channel_id = stream.get('epg_channel_id') or ''
-                    result.append({
-                        'name': name, 'icon': thumb, 'url': url_,
-                        'programs': programs,
-                        'epg_channel_id': epg_channel_id,
-                        'epg_dns': self.dns,
-                    })
-                except Exception:
+                name = clean_channel_name(stream.get('name', '') or '')
+                stream_id = stream.get('stream_id')
+                if not stream_id:
                     continue
-            if result:
-                result = sorted(result, key=lambda x: x['name'].lower())
-        except Exception as e:
-            log_iptv_problem(url, 'Erro ao abrir guia de canais: {}'.format(e))
+                url_ = '{}{}.m3u8'.format(self.play_url, stream_id)
+                thumb = clean_text(stream.get('stream_icon', ''))
+                epg_channel_id = stream.get('epg_channel_id') or ''
+                result.append({
+                    'name': name, 'icon': thumb, 'url': url_,
+                    'programs': None,
+                    'epg_channel_id': epg_channel_id,
+                    'epg_dns': self.dns,
+                })
+            except Exception:
+                continue
+        if result:
+            result = sorted(result, key=lambda x: x['name'].lower())
         return result
     def series_cat(self):
         itens = []
@@ -1321,8 +1043,6 @@ class API:
         return itens
     def all_movies(self):
         itens = []
-        if not self.check_server_alive():
-            return itens
         url = '{}&action=get_vod_streams'.format(self.player_api)
         data = self.http(url, 'json_url')
         if not isinstance(data, list) or not data:
@@ -1370,8 +1090,6 @@ class API:
         return itens
     def all_series(self):
         itens = []
-        if not self.check_server_alive():
-            return itens
         url = '{}&action=get_series'.format(self.player_api)
         data = self.http(url, 'json_url')
         if not isinstance(data, list) or not data:
@@ -1418,8 +1136,6 @@ class API:
         ext = extension or 'mp4'
         return self.check_protocol('{}{}.{}'.format(self.play_movies, str(stream_id), ext))
     def get_episode_stream(self, series_id, season, episode):
-        if not self.check_server_alive():
-            return None
         url = '{}&action=get_series_info&series_id={}'.format(self.player_api, str(series_id))
         data = self.http(url, 'json_url')
         if not data or 'episodes' not in data:
@@ -1448,48 +1164,3 @@ class API:
         except Exception as e:
             log_iptv_problem(self.dns, 'Erro ao obter episódio: {}'.format(e))
         return None
-    def vod(self, url=''):
-        itens = []
-        open_data = self.http(url or self.vod_url, 'vod' if url else None)
-        if not open_data:
-            return itens
-        try:
-            all_cats = self.regex_get_all(open_data, '<channel>', '</channel>')
-            if not all_cats:
-                return itens
-            for a in all_cats:
-                try:
-                    if '<playlist_url>' in open_data:
-                        name = clean_text(self.b64(self.regex_from_to(a, '<title>', '</title>')))
-                        vod_url = self.check_protocol(
-                            self.regex_from_to(a, '<playlist_url>', '</playlist_url>')
-                            .replace('<![CDATA[', '').replace(']]>', '')
-                        )
-                        if not name or 'All' in name or not self.allow(name):
-                            continue
-                        itens.append(('dir', name, vod_url))
-                    else:
-                        name = clean_text(self.b64(self.regex_from_to(a, '<title>', '</title>')))
-                        thumb = self.regex_from_to(a, '<desc_image>', '</desc_image>').replace('<![CDATA[', '').replace(']]>', '')
-                        vod_url = self.check_protocol(
-                            self.regex_from_to(a, '<stream_url>', '</stream_url>')
-                            .replace('<![CDATA[', '').replace(']]>', '')
-                        )
-                        desc = self.b64(self.regex_from_to(a, '<description>', '</description>'))
-                        plot = clean_text(self.regex_from_to(desc, 'PLOT:', '\n'))
-                        cast_s = self.regex_from_to(desc, 'CAST:', '\n')
-                        ratin = clean_text(self.regex_from_to(desc, 'RATING:', '\n'))
-                        year_s = self.regex_from_to(desc, 'RELEASEDATE:', '\n').replace(' ', '-')
-                        ym = re.compile(r'-.*?-.*?-(.*?)-', re.DOTALL).findall(year_s)
-                        year = str(ym).replace("['", '').replace("']", '') if ym else ''
-                        runt = clean_text(self.regex_from_to(desc, 'DURATION_SECS:', '\n'))
-                        genre = clean_text(self.regex_from_to(desc, 'GENRE:', '\n'))
-                        background = ''
-                        cast_list = str(cast_s).split() if cast_s else []
-                        itens.append(('play', name, vod_url, thumb, background,
-                                      plot, year, cast_list, ratin, genre))
-                except Exception:
-                    continue
-        except Exception as e:
-            log_iptv_problem(url or self.vod_url, 'Erro ao processar VOD: {}'.format(e))
-        return itens

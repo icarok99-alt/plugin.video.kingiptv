@@ -13,7 +13,6 @@ from lib.proxy import UnifiedServer, PROXY_PORT_POOL, get_active_port, is_port_f
 from lib.db_manager import get_db
 from lib.loading_window import loading_manager
 addon = xbmcaddon.Addon()
-getString = addon.getLocalizedString
 profile = xbmcvfs.translatePath('special://profile/addon_data/plugin.video.kingiptv')
 if not exists(profile):
     try:
@@ -130,6 +129,7 @@ def build_series_playlist(imdb_number, season_num, current_episode_num, serie_na
             )
             exclude_from_url = {'playcount', 'name', 'description', 'iconimage', 'fanart', 'episode_title'}
             url_params = {k: v for k, v in params.items() if k not in exclude_from_url}
+            url_params['via_playlist'] = '1'
             plugin_url = 'plugin://plugin.video.kingiptv/play_resolve_series/{}'.format(urlencode(url_params))
             display_label = name if name else '{}x{}'.format(season_num, str(ep_num).zfill(2))
             list_item = xbmcgui.ListItem(display_label)
@@ -142,32 +142,45 @@ def build_series_playlist(imdb_number, season_num, current_episode_num, serie_na
             info_tag.setSeason(season_num)
             info_tag.setEpisode(ep_num)
             info_tag.setPlaycount(1 if ep_num in watched_set else 0)
+            try:
+                info_tag.setResumePoint(0, 0)
+            except Exception:
+                pass
             playlist.add(url=plugin_url, listitem=list_item)
 
 def index_iptv():
     active = list_manager.get_active_list()
     addMenuItem({'name': TITULO, 'description': ''}, destiny='')
+    
+    # Se houver uma lista ativa, inicia o download do EPG em segundo plano
     if active:
-        xtream.ensure_epg_background(active['dns'], active['username'], active['password'])
-        addMenuItem({'name': getString(32000), 'description': ''}, destiny='/live_categories')
-        addMenuItem({'name': getString(32001), 'description': ''}, destiny='/channels_pluto')
-        addMenuItem({'name': getString(32002), 'description': ''}, destiny='/radios')
-        addMenuItem({'name': getString(32003), 'description': ''}, destiny='/imdb_movies')
-        addMenuItem({'name': getString(32004), 'description': ''}, destiny='/imdb_series')
-        addMenuItem({'name': getString(32041), 'description': ''}, destiny='/select_list')
-        addMenuItem({'name': getString(32005)}, destiny='/settings')
-    else:
-        addMenuItem({'name': getString(32001), 'description': ''}, destiny='/channels_pluto')
-        addMenuItem({'name': getString(32002), 'description': ''}, destiny='/radios')
-        addMenuItem({'name': getString(32040), 'description': ''}, destiny='/select_list')
-        addMenuItem({'name': getString(32005)}, destiny='/settings')
+        dns = active['dns']
+        username = active['username']
+        password = active['password']
+        def download_epg():
+            try:
+                xtream.ensure_epg_background(dns, username, password)
+                pluto.ensure_pluto_epg_background()
+            except Exception:
+                pass
+        threading.Thread(target=download_epg, daemon=True).start()
+        
+        addMenuItem({'name': 'TV AO VIVO', 'description': ''}, destiny='/live_categories')
+    addMenuItem({'name': 'PLUTO TV', 'description': ''}, destiny='/channels_pluto')
+    addMenuItem({'name': 'RÁDIOS', 'description': ''}, destiny='/radios')
+    if active:
+        addMenuItem({'name': 'IMDB FILMES', 'description': ''}, destiny='/imdb_movies')
+        addMenuItem({'name': 'IMDB SÉRIES', 'description': ''}, destiny='/imdb_series')
+    select_list_label = 'TROCAR LISTA' if active else 'ESCOLHER LISTA'
+    addMenuItem({'name': select_list_label, 'description': ''}, destiny='/select_list')
+    addMenuItem({'name': 'CONFIGURAÇÕES'}, destiny='/settings')
     end()
     setview('WideList')
 
 def prompt_select_list():
     iptv = xtream.parselist(API_CHANNELS)
     if not iptv:
-        notify(getString(32013))
+        notify('Nenhuma lista IPTV')
         return
     active = list_manager.get_active_list()
     labels = []
@@ -178,7 +191,7 @@ def prompt_select_list():
         if active and dns == active.get('dns') and str(username) == str(active.get('username'))\
                 and str(password) == str(active.get('password')):
             preselect = n
-    heading = getString(32041) if active else getString(32040)
+    heading = 'TROCAR LISTA' if active else 'ESCOLHER LISTA'
     dialog = xbmcgui.Dialog()
     try:
         choice = dialog.select(heading, labels, preselect=preselect)
@@ -189,9 +202,8 @@ def prompt_select_list():
     dns, username, password = iptv[choice]
     label = labels[choice]
     list_manager.set_active_list(dns, username, password, label)
-    notify(getString(32042))
-    xtream.refresh_vod_catalogs_background(dns, username, password)
-    xtream.ensure_epg_background(dns, username, password)
+    notify('Lista IPTV definida com sucesso')
+    # Nenhum download aqui, será feito em index_iptv ao recarregar a tela inicial
 
 @route('/')
 def index():
@@ -212,12 +224,12 @@ def select_list():
 def live_categories():
     active = list_manager.get_active_list()
     if not active:
-        notify(getString(32044))
+        notify('Nenhuma lista IPTV configurada. Escolha uma primeiro.')
         return
     dns = active['dns']
     username = active['username']
     password = active['password']
-    xtream.ensure_epg_background(dns, username, password)
+    # As categorias são obtidas com cache (já implementado em xtream.API.channels_category)
     cat = xtream.API(dns, username, password).channels_category()
     if cat:
         for i in cat:
@@ -239,7 +251,7 @@ def live_categories():
         with open_file(IPTV_PROBLEM_LOG, "a") as arquivo:
             if not check:
                 arquivo.write(url_problem)
-        notify(getString(32014))
+        notify('Lista Offline')
 
 
 def build_iptv_play_item(name, description, iconimage, url):
@@ -248,10 +260,9 @@ def build_iptv_play_item(name, description, iconimage, url):
     play_item.setContentLookup(False)
     play_item.setProperty('IsPlayable', 'true')
     play_item.setProperty('IsLive', 'true')
-    play_item.setProperty('inputstream', 'inputstream.ffmpegdirect')
-    play_item.setProperty('inputstream.ffmpegdirect.is_realtime_stream', 'true')
-    play_item.setProperty('inputstream.ffmpegdirect.stream_mode', 'live')
-    play_item.setProperty('inputstream.ffmpegdirect.manifest_type', 'hls')
+    play_item.setProperty('inputstream', 'inputstream.adaptive')
+    play_item.setProperty('inputstream.adaptive.manifest_type', 'hls')
+    play_item.setProperty('inputstream.adaptive.live_delay', '60')
     play_item.setArt({"icon": iconimage or "DefaultVideo.png", "thumb": iconimage or "DefaultVideo.png"})
     play_item.setMimeType("application/vnd.apple.mpegurl")
     info_tag = play_item.getVideoInfoTag()
@@ -291,7 +302,7 @@ def open_channels(param):
     url = param['url']
     channels = xtream.API(dns, username, password).channels_open_epg(url)
     if not channels:
-        notify(getString(32015))
+        notify('Opção indisponível')
         return
 
     xbmcplugin.endOfDirectory(handle, succeeded=False, updateListing=False, cacheToDisc=False)
@@ -299,17 +310,17 @@ def open_channels(param):
     def build(channel):
         return build_iptv_play_item(channel['name'], '', channel.get('icon', ''), channel.get('url', ''))
 
-    open_epg(header=getString(32000), channels=channels, build_listitem=build)
+    open_epg(header='TV AO VIVO', channels=channels, build_listitem=build)
 
 @route('/play_iptv')
 def play_iptv(param):
-    name = param.get('name', getString(32029))
+    name = param.get('name', 'Canal IPTV')
     description = param.get('description', '')
     iconimage = param.get('iconimage', '')
     url = param.get('url', '')
     proxy_url, play_item = build_iptv_play_item(name, description, iconimage, url)
     if not play_item:
-        notify(getString(32016))
+        notify('Stream Indisponível')
         return
     xbmcplugin.setResolvedUrl(int(sys.argv[1]), True, play_item)
 
@@ -317,7 +328,7 @@ def play_iptv(param):
 def channels_pluto():
     channels = pluto.playlist_pluto_epg()
     if not channels:
-        notify(getString(32018))
+        notify('Nenhum canal')
         return
 
     xbmcplugin.endOfDirectory(handle, succeeded=False, updateListing=False, cacheToDisc=False)
@@ -325,7 +336,7 @@ def channels_pluto():
     def build(channel):
         return build_pluto_play_item(channel['name'], '', channel.get('icon', ''), channel.get('url', ''))
 
-    open_epg(header=getString(32001), channels=channels, build_listitem=build)
+    open_epg(header='PLUTO TV', channels=pluto.to_lazy_channels(channels), build_listitem=build)
 
 @route('/play_pluto')
 def play_pluto(param):
@@ -335,7 +346,7 @@ def play_pluto(param):
     desc = param.get('description', '')
     clean_url, li = build_pluto_play_item(name, desc, iconimage, url)
     if not clean_url:
-        notify(getString(32016))
+        notify('Stream Indisponível')
         return
     xbmcplugin.setResolvedUrl(int(sys.argv[1]), True, li)
 
@@ -364,23 +375,23 @@ def play_radio(param):
 
 @route('/imdb_movies')
 def imdb_movies():
-    addMenuItem({'name': getString(32006), 'description': ''}, destiny='/find_movies')
-    addMenuItem({'name': getString(32007), 'description': ''}, destiny='/imdb_movies_250')
-    addMenuItem({'name': getString(32008), 'description': ''}, destiny='/imdb_movies_popular')
+    addMenuItem({'name': 'PESQUISAR FILME', 'description': ''}, destiny='/find_movies')
+    addMenuItem({'name': 'TOP 250 FILMES', 'description': ''}, destiny='/imdb_movies_250')
+    addMenuItem({'name': 'FILMES POPULARES', 'description': ''}, destiny='/imdb_movies_popular')
     end()
     setview('WideList')
 
 @route('/imdb_series')
 def imdb_series():
-    addMenuItem({'name': getString(32009), 'description': ''}, destiny='/find_series')
-    addMenuItem({'name': getString(32010), 'description': ''}, destiny='/imdb_series_250')
-    addMenuItem({'name': getString(32011), 'description': ''}, destiny='/imdb_series_popular')
+    addMenuItem({'name': 'PESQUISAR SÉRIE', 'description': ''}, destiny='/find_series')
+    addMenuItem({'name': 'TOP 250 SÉRIES', 'description': ''}, destiny='/imdb_series_250')
+    addMenuItem({'name': 'SÉRIES POPULARES', 'description': ''}, destiny='/imdb_series_popular')
     end()
     setview('WideList')
 
 @route('/find_movies')
 def find_movies():
-    keyboard = xbmc.Keyboard('', getString(32027))
+    keyboard = xbmc.Keyboard('', 'Digite o nome do filme')
     keyboard.doModal()
     if keyboard.isConfirmed():
         query = keyboard.getText()
@@ -406,7 +417,7 @@ def find_movies():
 
 @route('/find_series')
 def find_series():
-    keyboard = xbmc.Keyboard('', getString(32028))
+    keyboard = xbmc.Keyboard('', 'Digite o nome da série')
     keyboard.doModal()
     if keyboard.isConfirmed():
         query = keyboard.getText()
@@ -452,7 +463,7 @@ def movies_250(param=None):
                 'playable': True
             }, destiny='/play_resolve_movies')
         if end_ < len(all_items):
-            addMenuItem({'name': getString(32012), 'page': page + 1}, destiny='/imdb_movies_250')
+            addMenuItem({'name': 'Próxima Página', 'page': page + 1}, destiny='/imdb_movies_250')
         end()
         setview('List')
 
@@ -478,7 +489,7 @@ def series_250(param=None):
                 'year': year
             }, destiny='/open_imdb_seasons')
         if end_ < len(all_items):
-            addMenuItem({'name': getString(32012), 'page': page + 1}, destiny='/imdb_series_250')
+            addMenuItem({'name': 'Próxima Página', 'page': page + 1}, destiny='/imdb_series_250')
         end()
         setview('List')
 
@@ -506,7 +517,7 @@ def movies_popular(param=None):
                 'playable': True
             }, destiny='/play_resolve_movies')
         if end_ < len(all_items):
-            addMenuItem({'name': getString(32012), 'page': page + 1}, destiny='/imdb_movies_popular')
+            addMenuItem({'name': 'Próxima Página', 'page': page + 1}, destiny='/imdb_movies_popular')
         end()
         setview('List')
 
@@ -532,7 +543,7 @@ def series_popular(param=None):
                 'year': year
             }, destiny='/open_imdb_seasons')
         if end_ < len(all_items):
-            addMenuItem({'name': getString(32012), 'page': page + 1}, destiny='/imdb_series_popular')
+            addMenuItem({'name': 'Próxima Página', 'page': page + 1}, destiny='/imdb_series_popular')
         end()
         setview('List')
 
@@ -624,7 +635,7 @@ def find_movie_in_list(active, movie_name, original_name, year):
     if not match:
         log('[KINGIPTV][MATCH] NENHUM match aceito para {!r} (score={:.3f})'.format(movie_name, score))
         return None
-    stream_url = api_movie_url = xtream.API(dns, username, password).movie_play_url(
+    stream_url = xtream.API(dns, username, password).movie_play_url(
         match['stream_id'], match.get('extension')
     )
     log('[KINGIPTV][MATCH] match aceito: catalogo={!r} stream_id={} url={}'.format(
@@ -692,6 +703,10 @@ def build_play_item(stream, sub, title, iconimage, fanart, headers=None):
     log('[KINGIPTV][PLAY] path final enviado ao Kodi: {}'.format(redact_url_for_log(path)))
     play_item = xbmcgui.ListItem(label=title, path=path)
     play_item.setContentLookup(False)
+    try:
+        play_item.getVideoInfoTag().setResumePoint(0, 0)
+    except Exception:
+        pass
     if is_hls:
         play_item.setMimeType('application/x-mpegURL')
     elif is_mpd:
@@ -705,117 +720,144 @@ def build_play_item(stream, sub, title, iconimage, fanart, headers=None):
 
 @route('/play_resolve_movies')
 def play_resolve_movies(param):
-    movie_name = param.get('movie_name', param.get('name', ''))
-    iconimage = param.get('iconimage', '')
-    fanart = param.get('fanart', '')
-    imdb_number = param.get('imdbnumber', '')
-    description = param.get('description', '')
-    year = param.get('year', '')
-    original_name = param.get('original_name', '')
-    active = list_manager.get_active_list()
-    if not active:
-        notify(getString(32044))
-        xbmcplugin.setResolvedUrl(int(sys.argv[1]), False, xbmcgui.ListItem())
-        return
-    loading_manager.show()
+    loading_manager.start_busy_suppressor()
     try:
-        stream = find_movie_in_list(active, movie_name, original_name, year)
-        if not stream:
-            loading_manager.force_close()
-            notify(getString(32043))
+        movie_name = param.get('movie_name', param.get('name', ''))
+        iconimage = param.get('iconimage', '')
+        fanart = param.get('fanart', '')
+        imdb_number = param.get('imdbnumber', '')
+        description = param.get('description', '')
+        year = param.get('year', '')
+        original_name = param.get('original_name', '')
+        active = list_manager.get_active_list()
+        if not active:
+            notify('Nenhuma lista IPTV configurada. Escolha uma primeiro.')
             xbmcplugin.setResolvedUrl(int(sys.argv[1]), False, xbmcgui.ListItem())
             return
-        loading_manager.set_phase2()
-        play_item = build_play_item(stream, None, movie_name, iconimage, fanart, headers=XTREAM_PLAYER_HEADERS)
-        info_tag = play_item.getVideoInfoTag()
-        info_tag.setTitle(movie_name)
-        info_tag.setPlot(description)
-        info_tag.setIMDBNumber(imdb_number)
-        info_tag.setMediaType('movie')
-        info_tag.setOriginalTitle(original_name)
-        if year:
-            info_tag.setYear(int(year))
-        set_episode_property(imdb_number, 0, 0)
-        xbmcplugin.setResolvedUrl(int(sys.argv[1]), True, play_item)
-        loading_manager.close()
-    except Exception:
-        loading_manager.force_close()
-        notify(getString(32016))
-        xbmcplugin.setResolvedUrl(int(sys.argv[1]), False, xbmcgui.ListItem())
+        loading_manager.show()
+        try:
+            stream = find_movie_in_list(active, movie_name, original_name, year)
+            if not stream:
+                loading_manager.force_close()
+                notify('Stream Indisponível')
+                xbmcplugin.setResolvedUrl(int(sys.argv[1]), False, xbmcgui.ListItem())
+                return
+            loading_manager.set_phase2()
+            play_item = build_play_item(stream, None, movie_name, iconimage, fanart, headers=XTREAM_PLAYER_HEADERS)
+            info_tag = play_item.getVideoInfoTag()
+            info_tag.setTitle(movie_name)
+            info_tag.setPlot(description)
+            info_tag.setIMDBNumber(imdb_number)
+            info_tag.setMediaType('movie')
+            info_tag.setOriginalTitle(original_name)
+            if year:
+                info_tag.setYear(int(year))
+            set_episode_property(imdb_number, 0, 0)
+            xbmcplugin.setResolvedUrl(int(sys.argv[1]), True, play_item)
+            loading_manager.close()
+        except Exception:
+            loading_manager.force_close()
+            notify('Stream Indisponível')
+            xbmcplugin.setResolvedUrl(int(sys.argv[1]), False, xbmcgui.ListItem())
+    finally:
+        loading_manager.stop_busy_suppressor()
 
 @route('/play_resolve_series')
 def play_resolve_series(param):
-    serie_name = param.get('serie_name', '')
-    original_name = param.get('original_name', '')
-    season = param.get('season_num', '')
-    episode = param.get('episode_num', '')
-    imdb_number = param.get('imdbnumber', '')
-    year = param.get('year', '')
-    if not episode or not season:
-        notify(getString(32021))
-        return
-    if not str(episode).isdigit() or not str(season).isdigit():
-        notify(getString(32022))
-        return
-    current_episode_num = int(episode)
-    season_num = int(season)
-    if current_episode_num <= 0 or season_num <= 0:
-        notify(getString(32022))
-        return
-    active = list_manager.get_active_list()
-    if not active:
-        notify(getString(32044))
-        return
-    db = get_db()
-    episode_meta = db.get_episode_metadata(imdb_number, season_num, current_episode_num) or {}
-    episode_title = episode_meta.get('episode_title', '')
-    iconimage = episode_meta.get('thumbnail', '')
-    fanart = episode_meta.get('fanart', '')
-    description = episode_meta.get('description', '')
-    resume_data = db.get_resume_time(imdb_number, season_num, current_episode_num)
-    resume_time = None
-    if resume_data and resume_data[0] > 0:
-        if ask_resume(resume_data[0]):
-            resume_time = resume_data[0]
-        else:
-            db.clear_resume_time(imdb_number, season_num, current_episode_num)
-    loading_manager.show()
+    loading_manager.start_busy_suppressor()
     try:
-        stream = find_series_episode_in_list(active, serie_name, original_name, season_num, current_episode_num, year=year)
-        if not stream:
+        serie_name = param.get('serie_name', '')
+        original_name = param.get('original_name', '')
+        season = param.get('season_num', '')
+        episode = param.get('episode_num', '')
+        imdb_number = param.get('imdbnumber', '')
+        year = param.get('year', '')
+        via_playlist = param.get('via_playlist') == '1'
+        if not episode or not season:
+            notify('Erro: Parâmetros inválidos')
+            return
+        if not str(episode).isdigit() or not str(season).isdigit():
+            notify('Erro: Número de episódio/temporada inválido')
+            return
+        current_episode_num = int(episode)
+        season_num = int(season)
+        if current_episode_num <= 0 or season_num <= 0:
+            notify('Erro: Número de episódio/temporada inválido')
+            return
+        active = list_manager.get_active_list()
+        if not active:
+            notify('Nenhuma lista IPTV configurada. Escolha uma primeiro.')
+            if not via_playlist:
+                xbmcplugin.setResolvedUrl(int(sys.argv[1]), False, xbmcgui.ListItem())
+            return
+
+        if not via_playlist:
+            xbmcplugin.setResolvedUrl(int(sys.argv[1]), False, xbmcgui.ListItem())
+            db = get_db()
+            all_episodes = db.get_season_episodes(imdb_number, season_num)
+            if not all_episodes:
+                all_episodes = [{
+                    'episode': current_episode_num,
+                    'episode_title': param.get('episode_title', ''),
+                    'thumbnail': param.get('iconimage', ''),
+                    'fanart': param.get('fanart', ''),
+                    'description': param.get('description', ''),
+                }]
+            build_series_playlist(
+                imdb_number=imdb_number,
+                season_num=season_num,
+                current_episode_num=current_episode_num,
+                serie_name=serie_name,
+                original_name=original_name,
+                all_episodes=all_episodes,
+            )
+            playlist = xbmc.PlayList(xbmc.PLAYLIST_VIDEO)
+            if playlist.size() == 0:
+                notify('Stream Indisponível')
+                return
+            xbmc.Player().play(playlist)
+            return
+
+        db = get_db()
+        episode_meta = db.get_episode_metadata(imdb_number, season_num, current_episode_num) or {}
+        episode_title = episode_meta.get('episode_title', '')
+        iconimage = episode_meta.get('thumbnail', '')
+        fanart = episode_meta.get('fanart', '')
+        description = episode_meta.get('description', '')
+        resume_data = db.get_resume_time(imdb_number, season_num, current_episode_num)
+        resume_time = None
+        if resume_data and resume_data[0] > 0:
+            if ask_resume(resume_data[0]):
+                resume_time = resume_data[0]
+            else:
+                db.clear_resume_time(imdb_number, season_num, current_episode_num)
+        loading_manager.show()
+        try:
+            stream = find_series_episode_in_list(active, serie_name, original_name, season_num, current_episode_num, year=year)
+            if not stream:
+                loading_manager.force_close()
+                notify('Stream Indisponível')
+                xbmcplugin.setResolvedUrl(int(sys.argv[1]), False, xbmcgui.ListItem())
+                xbmc.PlayList(xbmc.PLAYLIST_VIDEO).clear()
+                return
+            loading_manager.set_phase2()
+            play_item = build_play_item(stream, None, episode_title, iconimage, fanart, headers=XTREAM_PLAYER_HEADERS)
+            info_tag = play_item.getVideoInfoTag()
+            info_tag.setTitle(episode_title)
+            info_tag.setTvShowTitle(serie_name)
+            info_tag.setOriginalTitle(original_name)
+            info_tag.setPlot(description)
+            info_tag.setIMDBNumber(imdb_number)
+            info_tag.setMediaType('episode')
+            info_tag.setSeason(season_num)
+            info_tag.setEpisode(current_episode_num)
+            set_episode_property(imdb_number, season_num, current_episode_num, resume_time)
+            xbmcplugin.setResolvedUrl(int(sys.argv[1]), True, play_item)
+            loading_manager.close()
+        except Exception:
             loading_manager.force_close()
-            notify(getString(32043))
+            notify('Stream Indisponível')
             xbmcplugin.setResolvedUrl(int(sys.argv[1]), False, xbmcgui.ListItem())
             xbmc.PlayList(xbmc.PLAYLIST_VIDEO).clear()
-            return
-        loading_manager.set_phase2()
-        play_item = build_play_item(stream, None, episode_title, iconimage, fanart, headers=XTREAM_PLAYER_HEADERS)
-        info_tag = play_item.getVideoInfoTag()
-        info_tag.setTitle(episode_title)
-        info_tag.setTvShowTitle(serie_name)
-        info_tag.setOriginalTitle(original_name)
-        info_tag.setPlot(description)
-        info_tag.setIMDBNumber(imdb_number)
-        info_tag.setMediaType('episode')
-        info_tag.setSeason(season_num)
-        info_tag.setEpisode(current_episode_num)
-        set_episode_property(imdb_number, season_num, current_episode_num, resume_time)
-        xbmcplugin.setResolvedUrl(int(sys.argv[1]), True, play_item)
-        playlist = xbmc.PlayList(xbmc.PLAYLIST_VIDEO)
-        if playlist.size() <= 1:
-            all_episodes = db.get_season_episodes(imdb_number, season_num)
-            if all_episodes:
-                build_series_playlist(
-                    imdb_number=imdb_number,
-                    season_num=season_num,
-                    current_episode_num=current_episode_num,
-                    serie_name=serie_name,
-                    original_name=original_name,
-                    all_episodes=all_episodes,
-                )
-        loading_manager.close()
-    except Exception:
-        loading_manager.force_close()
-        notify(getString(32016))
-        xbmcplugin.setResolvedUrl(int(sys.argv[1]), False, xbmcgui.ListItem())
-        xbmc.PlayList(xbmc.PLAYLIST_VIDEO).clear()
+    finally:
+        loading_manager.stop_busy_suppressor()

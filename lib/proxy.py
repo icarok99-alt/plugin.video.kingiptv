@@ -19,29 +19,11 @@ import socketserver
 import http.client
 from urllib.parse import urlsplit
 try:
-    import xbmc
-except Exception:
-    xbmc = None
-try:
     import xbmcvfs
 except Exception:
     xbmcvfs = None
 
-def log(msg, level=None):
-    try:
-        if xbmc:
-            if level is None:
-                level = xbmc.LOGINFO
-            xbmc.log("[XC Pro Proxy] {}".format(msg), level)
-        else:
-            print("[XC Pro Proxy] {}".format(msg))
-    except Exception:
-        pass
-
-
 PROXY_PORT_POOL = [57845, 57846, 57847, 57848, 57849, 57850]
-
-
 PROXY_PORT = PROXY_PORT_POOL[0]
 port_state_lock = threading.Lock()
 
@@ -56,8 +38,6 @@ def set_active_port(port):
     persist_port(port)
 
 def port_state_path():
-
-
     try:
         if xbmcvfs is not None:
             base = xbmcvfs.translatePath(
@@ -124,6 +104,13 @@ CACHE_CLEANUP_INTERVAL = 60
 PREFETCH_SEGMENT_COUNT = 3
 SEGMENT_CACHE_TTL = 30
 SEGMENT_CACHE_MAX = 60
+SOCKET_IDLE_TIMEOUT = 20
+SOCKET_STREAM_TIMEOUT = 20
+PREFETCH_TIMEOUT = 8
+PREFETCH_MAX_RETRIES = 2
+MAX_PREFETCH_THREADS = 6
+MAX_CONCURRENT_HANDLERS = 40
+CHANNEL_IDLE_ABORT_SECONDS = 15
 CHROME_UA = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
     "AppleWebKit/537.36 (KHTML, like Gecko) "
@@ -325,6 +312,10 @@ class UnifiedProxy:
         self.maintenance_lock = threading.Lock()
         self.channel_warmed_up = set()
         self.warmup_lock = threading.Lock()
+        self.prefetch_threads_active = 0
+        self.prefetch_threads_lock = threading.Lock()
+        self.active_handlers = 0
+        self.active_handlers_lock = threading.Lock()
 
     def start_maintenance(self):
         with self.maintenance_lock:
@@ -333,7 +324,7 @@ class UnifiedProxy:
             self.maintenance_started = True
         t = threading.Thread(target=self.cleanup_loop, daemon=True)
         t.start()
-        log("Thread de limpeza de cache iniciada")
+        pass
 
     def cleanup_loop(self):
         while True:
@@ -360,9 +351,22 @@ class UnifiedProxy:
                         self.mp4_cache_last_used.pop(k, None)
                         removed += 1
                 if removed:
-                    log("Cache cleanup: {} entrada(s) antiga(s) removida(s)".format(removed))
+                    pass
             except Exception as e:
-                log("Erro no cleanup de cache: {}".format(e))
+                pass
+
+    def acquire_handler_slot(self):
+        with self.active_handlers_lock:
+            self.active_handlers += 1
+            over_limit = self.active_handlers > MAX_CONCURRENT_HANDLERS
+            if over_limit:
+                pass
+        return not over_limit
+
+    def release_handler_slot(self):
+        with self.active_handlers_lock:
+            if self.active_handlers > 0:
+                self.active_handlers -= 1
 
     def acquire_stream_slot(self):
         with self.active_streams_lock:
@@ -375,8 +379,10 @@ class UnifiedProxy:
         with self.active_streams_lock:
             if self.active_streams > 0:
                 self.active_streams -= 1
+
     def get_random_user_agent(self):
         return random.choice(UA_POOL)
+
     def get_local_ip(self):
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         try:
@@ -387,8 +393,9 @@ class UnifiedProxy:
         finally:
             s.close()
         return ip
+
     def extract_url_from_path(self, path):
-        log(f"EXTRAINDO URL DE: {path}")
+        pass
         if '/?url=' in path:
             url_part = path.split('/?url=', 1)[1]
             if '&' in url_part:
@@ -406,13 +413,18 @@ class UnifiedProxy:
         if path.startswith('http://') or path.startswith('https://'):
             return unquote(path)
         return None
+
+    def channel_key(self, url):
+        return re.sub(r'(_=\d+|timestamp=\d+|t=\d+|seq=\d+)', '', url)
+
     def get_channel_cache(self, url):
-        clean_url = re.sub(r'(_=\d+|timestamp=\d+|t=\d+|seq=\d+)', '', url)
+        clean_url = self.channel_key(url)
         with self.stream_lock:
             if clean_url not in self.channel_caches:
                 self.channel_caches[clean_url] = CircularBuffer(CACHE_DURATION_SECONDS, CACHE_MAX_CHUNKS)
             self.channel_cache_last_used[clean_url] = time.time()
             return self.channel_caches[clean_url]
+
     def get_mp4_cache(self, url):
         clean_url = re.sub(r'(_=\d+|timestamp=\d+|t=\d+|seq=\d+)', '', url)
         with self.cache_lock:
@@ -420,14 +432,15 @@ class UnifiedProxy:
                 self.mp4_caches[clean_url] = MP4Cache(CACHE_MAX_CHUNKS)
             self.mp4_cache_last_used[clean_url] = time.time()
             return self.mp4_caches[clean_url]
+
     def fetch_channel_with_fallback(self, url, headers=None, range_header=None, cache=None,
-                                     is_alive=None, max_retries=None):
+                                     is_alive=None, max_retries=None, timeout=15):
         if headers is None:
             headers = {}
         retries = max_retries if max_retries is not None else MAX_RETRIES
         for attempt in range(retries):
             if is_alive is not None and not is_alive():
-                log("Cliente desconectado, abortando tentativas de reconexao")
+                pass
                 return None, 0, None
             if attempt == 0:
                 user_agent = CHROME_UA
@@ -451,9 +464,9 @@ class UnifiedProxy:
             try:
                 req = Request(url, headers=req_headers)
                 if url.startswith('https'):
-                    response = urlopen(req, timeout=15, context=self.ssl_context)
+                    response = urlopen(req, timeout=timeout, context=self.ssl_context)
                 else:
-                    response = urlopen(req, timeout=15)
+                    response = urlopen(req, timeout=timeout)
                 status_code = response.getcode()
                 content_encoding = response.headers.get('content-encoding', '').lower()
                 if status_code not in [200, 206]:
@@ -474,8 +487,10 @@ class UnifiedProxy:
                     continue
                 return None, 0, None
         return None, 0, None
+
     def segment_key(self, url):
         return re.sub(r'(_=\d+|timestamp=\d+|t=\d+|seq=\d+)', '', url)
+
     def get_cached_segment(self, url):
         key = self.segment_key(url)
         with self.segment_cache_lock:
@@ -487,8 +502,12 @@ class UnifiedProxy:
                 del self.segment_cache[key]
                 return None
             return data
+
     def store_segment(self, url, data):
         if not data:
+            return
+        if data[0] != 0x47:
+            pass
             return
         key = self.segment_key(url)
         with self.segment_cache_lock:
@@ -497,10 +516,35 @@ class UnifiedProxy:
                 oldest_key = min(self.segment_cache, key=lambda k: self.segment_cache[k][1])
                 if oldest_key != key:
                     del self.segment_cache[oldest_key]
+
+    def download_complete_segment(self, url, headers, timeout=20):
+        try:
+            response, status, content_encoding = self.fetch_channel_with_fallback(
+                url, headers, max_retries=MAX_RETRIES, timeout=timeout
+            )
+            if response and status in (200, 206):
+                data = response.read()
+                response.close()
+                if content_encoding == 'gzip':
+                    data = gzip.decompress(data)
+                elif content_encoding == 'deflate':
+                    data = zlib.decompress(data)
+                if len(data) > 0 and data[0] == 0x47:
+                    return data
+                else:
+                    pass
+                    return None
+        except Exception as e:
+            pass
+        return None
+
     def download_segment_to_cache(self, url, headers):
         key = self.segment_key(url)
+        response = None
         try:
-            response, status_code, content_encoding = self.fetch_channel_with_fallback(url, headers)
+            response, status_code, content_encoding = self.fetch_channel_with_fallback(
+                url, headers, max_retries=PREFETCH_MAX_RETRIES, timeout=PREFETCH_TIMEOUT
+            )
             if response and status_code in [200, 206]:
                 data = response.read()
                 try:
@@ -511,15 +555,20 @@ class UnifiedProxy:
                 except Exception:
                     pass
                 self.store_segment(url, data)
+        except Exception as e:
+            pass
+        finally:
+            if response is not None:
                 try:
                     response.close()
                 except Exception:
                     pass
-        except Exception as e:
-            log("Erro no prefetch de segmento: {}".format(e))
-        finally:
             with self.prefetching_lock:
                 self.prefetching.discard(key)
+            with self.prefetch_threads_lock:
+                if self.prefetch_threads_active > 0:
+                    self.prefetch_threads_active -= 1
+
     def extract_segments_with_duration(self, playlist_content, base_url):
         segments = []
         pending_duration = None
@@ -543,7 +592,8 @@ class UnifiedProxy:
                 pass
             pending_duration = None
         return segments
-    def prefetch_segments(self, urls, headers):
+
+    def prefetch_segments(self, urls, headers, channel_key=None):
         to_fetch = []
         for seg_url in urls[:PREFETCH_SEGMENT_COUNT]:
             key = self.segment_key(seg_url)
@@ -556,14 +606,30 @@ class UnifiedProxy:
             to_fetch.append(seg_url)
         if not to_fetch:
             return []
-        t = threading.Thread(target=self.download_segments_sequentially, args=(to_fetch, headers))
+        with self.prefetch_threads_lock:
+            if self.prefetch_threads_active >= MAX_PREFETCH_THREADS:
+                with self.prefetching_lock:
+                    for seg_url in to_fetch:
+                        self.prefetching.discard(self.segment_key(seg_url))
+                pass
+                return []
+            self.prefetch_threads_active += 1
+        t = threading.Thread(target=self.download_segments_sequentially, args=(to_fetch, headers, channel_key))
         t.daemon = True
         t.start()
         return [t]
-    def download_segments_sequentially(self, urls, headers):
+
+    def download_segments_sequentially(self, urls, headers, channel_key=None):
         for seg_url in urls:
+            if channel_key is not None:
+                last_used = self.channel_cache_last_used.get(channel_key)
+                if last_used is not None and (time.time() - last_used) > CHANNEL_IDLE_ABORT_SECONDS:
+                    with self.prefetching_lock:
+                        self.prefetching.discard(self.segment_key(seg_url))
+                    continue
             self.download_segment_to_cache(seg_url, headers)
-    def rewrite_m3u8_urls(self, playlist_content, base_url, proxy_host, headers=None, prefetch=True):
+
+    def rewrite_m3u8_urls(self, playlist_content, base_url, proxy_host, headers=None, prefetch=True, channel_key=None):
         segment_urls = []
         def to_proxy_url(raw_url):
             raw_url = raw_url.strip()
@@ -606,8 +672,32 @@ class UnifiedProxy:
                 line = proxify_line(line)
             lines.append(line)
         if prefetch and segment_urls:
-            self.prefetch_segments(segment_urls, headers)
+            self.prefetch_segments(segment_urls, headers, channel_key=channel_key)
         return '\n'.join(lines)
+
+    def _send_segment(self, wfile, data):
+        try:
+            wfile.write(b"HTTP/1.1 200 OK\r\n")
+            wfile.write(b"Content-Type: video/mp2t\r\n")
+            wfile.write(b"Access-Control-Allow-Origin: *\r\n")
+            wfile.write(b"Cache-Control: no-cache\r\n")
+            wfile.write(f"Content-Length: {len(data)}\r\n".encode())
+            wfile.write(b"\r\n")
+            wfile.write(data)
+        except Exception as e:
+            pass
+
+    def _send_error(self, wfile, code, message=""):
+        try:
+            body = f"{code} {message}".encode()
+            wfile.write(f"HTTP/1.1 {code} {message}\r\n".encode())
+            wfile.write(b"Content-Type: text/plain\r\n")
+            wfile.write(f"Content-Length: {len(body)}\r\n".encode())
+            wfile.write(b"Connection: close\r\n\r\n")
+            wfile.write(body)
+        except Exception:
+            pass
+
     def handle_channel_stream(self, url, headers, wfile, client_sock=None, method='GET'):
         if method in ('HEAD', 'OPTIONS'):
             content_type = 'application/vnd.apple.mpegurl' if '.m3u8' in url.lower() else 'video/mp2t'
@@ -621,6 +711,22 @@ class UnifiedProxy:
             except Exception:
                 pass
             return
+
+        is_ts_segment = '.ts' in url.lower() or '/segment/' in url.lower()
+
+        if is_ts_segment:
+            cached = self.get_cached_segment(url)
+            if cached:
+                self._send_segment(wfile, cached)
+                return
+            segment_data = self.download_complete_segment(url, headers)
+            if segment_data is None:
+                self._send_error(wfile, 503, "Segmento indisponivel")
+                return
+            self.store_segment(url, segment_data)
+            self._send_segment(wfile, segment_data)
+            return
+
         cache = self.get_channel_cache(url)
         is_playlist_url = '.m3u8' in url.lower()
         if not is_playlist_url:
@@ -657,8 +763,6 @@ class UnifiedProxy:
 
         last_alive_check = [0.0]
         def is_client_alive():
-
-
             if client_gone[0]:
                 return False
             if client_sock is None:
@@ -683,17 +787,17 @@ class UnifiedProxy:
                 return True
             finally:
                 try:
-                    client_sock.settimeout(None)
+                    client_sock.settimeout(SOCKET_STREAM_TIMEOUT)
                 except Exception:
                     pass
 
         response = None
         stream_slot_acquired = self.acquire_stream_slot()
         if not stream_slot_acquired:
-            log("Limite de streams simultaneas atingido, recusando nova conexao de canal")
+            pass
             return
         try:
-            log("Iniciando stream de canal: {}".format(url[:80]))
+            pass
             response, status_code, content_encoding = self.fetch_channel_with_fallback(
                 url, headers, None, cache, is_alive=is_client_alive
             )
@@ -730,7 +834,8 @@ class UnifiedProxy:
                         playlist_text = content.decode('utf-8', errors='ignore')
                         proxy_host = "127.0.0.1:{}".format(get_active_port())
                         base_url = content_url.rsplit('/', 1)[0]
-                        rewritten = self.rewrite_m3u8_urls(playlist_text, base_url, proxy_host, headers)
+                        rewritten = self.rewrite_m3u8_urls(playlist_text, base_url, proxy_host, headers,
+                                                            channel_key=self.channel_key(url))
                         response.close()
                         safe_write(b"HTTP/1.1 200 OK\r\n"
                                    b"Content-Type: application/vnd.apple.mpegurl\r\n" +
@@ -740,7 +845,7 @@ class UnifiedProxy:
                                    rewritten.encode('utf-8'))
                         return
                     except Exception as e:
-                        log("Erro M3U8: {}".format(e))
+                        pass
                         return
                 content_length_header = response.headers.get('content-length')
                 try:
@@ -768,13 +873,13 @@ class UnifiedProxy:
                 last_progress = time.time()
                 while not client_gone[0]:
                     if not is_client_alive():
-                        log("Cliente desconectado detectado ativamente, encerrando thread")
+                        pass
                         break
                     if time.time() - last_progress > MAX_STALL_SECONDS:
-                        log("Stream parada sem progresso por {}s, encerrando thread".format(MAX_STALL_SECONDS))
+                        pass
                         break
                     if total_reconnects > MAX_TOTAL_RECONNECTS:
-                        log("Limite de reconexoes ({}) atingido, encerrando thread".format(MAX_TOTAL_RECONNECTS))
+                        pass
                         break
                     try:
                         if response:
@@ -822,7 +927,7 @@ class UnifiedProxy:
                                     is_alive=is_client_alive, max_retries=MAX_RECONNECT_RETRIES
                                 )
                                 if new_response and new_status == 200 and already_sent_before_reconnect > 0:
-                                    log("Origem ignorou Range no retomar, encerrando para evitar segmento corrompido")
+                                    pass
                                     new_response.close()
                                     break
                                 if new_response and new_status in [200, 206]:
@@ -865,7 +970,7 @@ class UnifiedProxy:
                                     is_alive=is_client_alive, max_retries=MAX_RECONNECT_RETRIES
                                 )
                                 if new_response and new_status == 200 and already_sent_before_reconnect > 0:
-                                    log("Origem ignorou Range no retomar, encerrando para evitar segmento corrompido")
+                                    pass
                                     new_response.close()
                                     break
                                 if new_response and new_status in [200, 206]:
@@ -891,7 +996,7 @@ class UnifiedProxy:
                             if client_gone[0]:
                                 break
         except Exception as e:
-            log("Erro handle_channel_stream: {}".format(e))
+            pass
         finally:
             if response:
                 try:
@@ -900,6 +1005,7 @@ class UnifiedProxy:
                     pass
             if stream_slot_acquired:
                 self.release_stream_slot()
+
     def fetch_mp4_with_retry(self, url, range_header=None, method='GET'):
         for attempt in range(MAX_RETRIES):
             try:
@@ -926,8 +1032,9 @@ class UnifiedProxy:
                 if attempt < MAX_RETRIES - 1:
                     time.sleep(RETRY_DELAY)
                     continue
-                log("Erro fetch MP4: {}".format(e))
+                pass
                 return None
+
     def parse_range(self, range_header):
         if not range_header:
             return None
@@ -937,6 +1044,7 @@ class UnifiedProxy:
         start = int(match.group(1))
         end = int(match.group(2)) if match.group(2) else None
         return start, end
+
     def parse_total_size(self, headers):
         content_range = headers.get('Content-Range', '') or headers.get('content-range', '')
         match = re.search(r"/(\d+)$", content_range)
@@ -946,6 +1054,7 @@ class UnifiedProxy:
         if content_length and content_length.isdigit():
             return int(content_length)
         return None
+
     def detect_mp4(self, url):
         lower = url.lower()
         if any(ext in lower for ext in ['.mp4', '.mkv', '.webm', '.f4v', '.mov', '.avi']):
@@ -955,6 +1064,7 @@ class UnifiedProxy:
         if 'xtream' in lower and ('/movie/' in lower or '/series/' in lower):
             return True
         return False
+
     def handle_mp4_stream(self, url, method, req_headers, wfile):
         cache = self.get_mp4_cache(url)
         range_header = req_headers.get('range')
@@ -1024,7 +1134,7 @@ class UnifiedProxy:
         except (BrokenPipeError, socket.error):
             pass
         except Exception as e:
-            log("Erro stream MP4: {}".format(e))
+            pass
         finally:
             upstream.close()
 
@@ -1062,6 +1172,21 @@ class ProxyHandler(socketserver.StreamRequestHandler):
             pass
     def handle(self):
         try:
+            self.connection.settimeout(SOCKET_IDLE_TIMEOUT)
+        except Exception:
+            pass
+        slot_ok = True
+        try:
+            slot_ok = self.proxy.acquire_handler_slot()
+        except Exception:
+            slot_ok = True
+        try:
+            if not slot_ok:
+                try:
+                    self.send_error(503, "Too Many Connections")
+                except Exception:
+                    pass
+                return
             raw = self.rfile.readline(65537)
             if not raw:
                 return
@@ -1104,9 +1229,14 @@ class ProxyHandler(socketserver.StreamRequestHandler):
             else:
                 self.do_GET()
         except Exception as e:
-            log("RAW socket handler erro: {}".format(e))
+            pass
             try:
                 self.send_error(500, "Internal Server Error")
+            except Exception:
+                pass
+        finally:
+            try:
+                self.proxy.release_handler_slot()
             except Exception:
                 pass
     def do_GET(self):
@@ -1122,7 +1252,7 @@ class ProxyHandler(socketserver.StreamRequestHandler):
         self.end_headers()
     def process_request(self):
         try:
-            log("Requisição: {} {}".format(self.command, self.path))
+            pass
             url = self.proxy.extract_url_from_path(self.path)
             if not url:
                 html = """<html><body>
@@ -1135,7 +1265,7 @@ class ProxyHandler(socketserver.StreamRequestHandler):
                 self.end_headers()
                 self.wfile.write(html)
                 return
-            log("Proxy para URL: {}".format(url))
+            pass
             headers = {}
             for key, value in self.headers.items():
                 headers[key.lower()] = value
@@ -1144,7 +1274,7 @@ class ProxyHandler(socketserver.StreamRequestHandler):
             else:
                 self.proxy.handle_channel_stream(url, headers, self.wfile, getattr(self, 'connection', None), method=self.command)
         except Exception as e:
-            log("Erro handle_request: {}".format(e))
+            pass
             try:
                 self.send_error(500, str(e))
             except Exception:
@@ -1155,8 +1285,6 @@ class ThreadedTCPServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
     daemon_threads = True
 
 def make_redirect_handler(target_port):
-
-
     class RedirectHandler(socketserver.StreamRequestHandler):
         def handle(self):
             try:
@@ -1197,8 +1325,6 @@ class NoPortAvailableError(Exception):
 
 class UnifiedServer:
     def __init__(self, ports=None):
-
-
         self.ports = list(ports) if ports else list(PROXY_PORT_POOL)
         self.port = None
         self.server = None
@@ -1207,15 +1333,11 @@ class UnifiedServer:
         self.redirect_servers = []
     def bind_with_rotation(self):
         remaining = list(self.ports)
-
-
         preferred = read_persisted_port()
         ordered = []
         if preferred in remaining:
             ordered.append(preferred)
             remaining.remove(preferred)
-
-
         random.shuffle(remaining)
         ordered.extend(remaining)
         last_err = None
@@ -1225,14 +1347,12 @@ class UnifiedServer:
                 return server, p
             except OSError as e:
                 last_err = e
-                log("Porta {} indisponivel ({}), tentando proxima da rotacao...".format(p, e))
+                pass
                 continue
         raise NoPortAvailableError(
             "Nenhuma porta livre no pool de rotacao: {}".format(ordered)
         ) from last_err
     def start_backup_redirects(self):
-
-
         handler_cls = make_redirect_handler(self.port)
         for p in self.ports:
             if p == self.port:
@@ -1241,15 +1361,13 @@ class UnifiedServer:
                 srv = RedirectTCPServer(("127.0.0.1", p), handler_cls)
                 srv.timeout = 1
             except OSError:
-
-
                 continue
             th = threading.Thread(target=self.serve_redirects, args=(srv,), daemon=True)
             th.start()
             self.redirect_servers.append((srv, th))
         if self.redirect_servers:
             active_ports = [s.server_address[1] for s, _t in self.redirect_servers]
-            log("Redirecionadores de fallback ativos em: {} -> porta ativa {}".format(active_ports, self.port))
+            pass
     def serve_redirects(self, srv):
         while self.running:
             try:
@@ -1272,21 +1390,21 @@ class UnifiedServer:
             self.server.timeout = 1
             self.start_backup_redirects()
             ProxyHandler.proxy.start_maintenance()
-            log("=== PROXY INICIADO em 127.0.0.1:{} (rotacao de portas) ===".format(self.port))
+            pass
             while self.running:
                 if self.monitor and self.monitor.abortRequested():
-                    log("abortRequested detectado, parando proxy...")
+                    pass
                     break
                 try:
                     self.server.handle_request()
                 except OSError as e:
-                    log("Socket error: {}".format(e))
+                    pass
                 except Exception as e:
-                    log("Erro processando request: {}".format(e))
+                    pass
         except NoPortAvailableError as e:
-            log("Erro no servidor: {}".format(e))
+            pass
         except Exception as e:
-            log("Erro no servidor: {}".format(e))
+            pass
         finally:
             self.stop()
     def stop(self):
@@ -1300,8 +1418,8 @@ class UnifiedServer:
                     pass
                 self.server = None
         except Exception as e:
-            log("Erro ao fechar servidor: {}".format(e))
-        log("Proxy finalizado")
+            pass
+        pass
     def is_running(self):
         return (
             self.running and
@@ -1310,8 +1428,6 @@ class UnifiedServer:
 if __name__ == '__main__':
     server = UnifiedServer()
     try:
-        print("Iniciando Proxy Unificado com rotacao de portas: {}".format(PROXY_PORT_POOL))
         server.start()
     except KeyboardInterrupt:
-        print("Parando Proxy Unificado...")
         server.stop()
