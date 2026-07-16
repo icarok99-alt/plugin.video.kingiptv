@@ -157,34 +157,13 @@ def clean_channel_name(name):
     ]
     pattern = r'\[(' + '|'.join(re.escape(s) for s in sufixos_res) + r')\]'
     name = re.sub(pattern, r'\1', name)
+    codecs = ['H264', 'H265', 'HEVC', 'AVC', 'X264', 'X265']
+    pattern2 = r'\((' + '|'.join(re.escape(c) for c in codecs) + r')\)'
+    name = re.sub(pattern2, r'\1', name)
     name = re.sub(r'\s*\[\d{1,2}:\d{2}\s*-\s*\d{1,2}:\d{2}\]', '', name)
     name = re.sub(r'\s*\+\s*\d+\.?\d*\s*min', '', name)
     name = re.sub(r'\s+', ' ', name).strip()
-    tags_inicio = []
-    resto = name
-    while True:
-        match = re.match(r'^(\[[^\]]+\])\s*', resto)
-        if match:
-            tags_inicio.append(match.group(1))
-            resto = resto[match.end():]
-        else:
-            break
-    if not resto:
-        return name
-    palavras = resto.split()
-    ultimo_sufixo_idx = -1
-    for idx, palavra in enumerate(palavras):
-        palavra_limpa = re.sub(r'[¹²+]', '', palavra.upper())
-        if palavra.upper() in sufixos_res or palavra_limpa in sufixos_res:
-            ultimo_sufixo_idx = idx
-    if ultimo_sufixo_idx >= 0:
-        canal_str = ' '.join(palavras[:ultimo_sufixo_idx + 1])
-        name = (' '.join(tags_inicio) + ' ' + canal_str).strip() if tags_inicio else canal_str
-    else:
-        name = (' '.join(tags_inicio) + ' ' + resto).strip() if tags_inicio else resto
-    if '-' in name:
-        name = re.sub(r'\s*-\s*', ' - ', name)
-    return re.sub(r'\s+', ' ', name).strip()
+    return name
 
 def ordenar_resolucao(item):
     name = item[0]
