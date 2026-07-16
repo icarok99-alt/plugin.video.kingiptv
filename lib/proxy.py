@@ -19,6 +19,10 @@ import socketserver
 import http.client
 from urllib.parse import urlsplit
 try:
+    import xbmc
+except Exception:
+    xbmc = None
+try:
     import xbmcvfs
 except Exception:
     xbmcvfs = None
@@ -152,6 +156,7 @@ class SimpleDNS:
         self.dns_servers = ["1.1.1.1", "8.8.8.8", "208.67.222.222"]
         self.original_getaddrinfo = socket.getaddrinfo
         socket.getaddrinfo = self.resolver
+
     def build_query(self, domain):
         transaction_id = random.randint(0, 65535)
         header = struct.pack(">HHHHHH", transaction_id, 0x0100, 1, 0, 0, 0)
@@ -159,6 +164,7 @@ class SimpleDNS:
             bytes([len(part)]) + part.encode() for part in domain.split(".")
         ) + b"\x00"
         return header + qname + struct.pack(">HH", 1, 1)
+
     def parse_response(self, data):
         try:
             answer_count = struct.unpack(">H", data[6:8])[0]
@@ -177,6 +183,7 @@ class SimpleDNS:
         except Exception:
             pass
         return None
+
     def resolve(self, domain):
         if domain in self.cache and self.cache[domain]["expires"] > time.time():
             return self.cache[domain]["ip"]
@@ -195,6 +202,7 @@ class SimpleDNS:
             except Exception:
                 continue
         return None
+
     def resolver(self, host, port, *args, **kwargs):
         try:
             socket.inet_aton(host)
@@ -204,6 +212,7 @@ class SimpleDNS:
             if ip:
                 return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", (ip, port))]
         return self.original_getaddrinfo(host, port, *args, **kwargs)
+
 dns = SimpleDNS()
 
 class CircularBuffer:
@@ -215,6 +224,7 @@ class CircularBuffer:
         self.lock = threading.Lock()
         self.last_update = 0
         self.stream_started = False
+
     def add_chunk(self, chunk):
         with self.lock:
             self.buffer.append(chunk)
@@ -226,6 +236,7 @@ class CircularBuffer:
                 removed = self.buffer.popleft()
                 self.timestamps.popleft()
                 self.total_bytes -= len(removed)
+
     def get_recovery_chunks(self, duration=3):
         with self.lock:
             if not self.buffer:
@@ -238,11 +249,13 @@ class CircularBuffer:
             if not recovery and self.buffer:
                 recovery = list(self.buffer)[-20:]
             return recovery
+
     def get_continuous_chunks(self, count=30):
         with self.lock:
             if not self.buffer:
                 return []
             return list(self.buffer)[-count:]
+
     def clear(self):
         with self.lock:
             self.buffer.clear()
@@ -257,6 +270,7 @@ class MP4Cache:
         self.lock = threading.Lock()
         self.total_size = 0
         self.content_length = None
+
     def add_chunk(self, start_byte, data):
         if not data:
             return
@@ -268,6 +282,7 @@ class MP4Cache:
                     oldest = min(self.chunks.keys())
                     self.total_size -= len(self.chunks[oldest])
                     del self.chunks[oldest]
+
     def get_range(self, start, end):
         with self.lock:
             keys = sorted(self.chunks.keys())
@@ -316,6 +331,8 @@ class UnifiedProxy:
         self.prefetch_threads_lock = threading.Lock()
         self.active_handlers = 0
         self.active_handlers_lock = threading.Lock()
+        self.current_playlist_url = None
+        self.current_playlist_headers = None
 
     def start_maintenance(self):
         with self.maintenance_lock:
@@ -324,7 +341,6 @@ class UnifiedProxy:
             self.maintenance_started = True
         t = threading.Thread(target=self.cleanup_loop, daemon=True)
         t.start()
-        pass
 
     def cleanup_loop(self):
         while True:
@@ -350,17 +366,13 @@ class UnifiedProxy:
                         self.mp4_caches.pop(k, None)
                         self.mp4_cache_last_used.pop(k, None)
                         removed += 1
-                if removed:
-                    pass
-            except Exception as e:
+            except Exception:
                 pass
 
     def acquire_handler_slot(self):
         with self.active_handlers_lock:
             self.active_handlers += 1
             over_limit = self.active_handlers > MAX_CONCURRENT_HANDLERS
-            if over_limit:
-                pass
         return not over_limit
 
     def release_handler_slot(self):
@@ -395,7 +407,6 @@ class UnifiedProxy:
         return ip
 
     def extract_url_from_path(self, path):
-        pass
         if '/?url=' in path:
             url_part = path.split('/?url=', 1)[1]
             if '&' in url_part:
@@ -440,7 +451,6 @@ class UnifiedProxy:
         retries = max_retries if max_retries is not None else MAX_RETRIES
         for attempt in range(retries):
             if is_alive is not None and not is_alive():
-                pass
                 return None, 0, None
             if attempt == 0:
                 user_agent = CHROME_UA
@@ -471,9 +481,14 @@ class UnifiedProxy:
                 content_encoding = response.headers.get('content-encoding', '').lower()
                 if status_code not in [200, 206]:
                     return None, status_code, None
+                try:
+                    if hasattr(response.fp, '_sock') and response.fp._sock:
+                        response.fp._sock.settimeout(10)
+                except Exception:
+                    pass
                 return response, status_code, content_encoding
             except HTTPError as e:
-                if attempt < retries - 1 and e.code in [403, 406, 451, 500, 502, 503, 504, 523]:
+                if attempt < retries - 1 and e.code in [403, 406, 451, 500, 502, 503, 504, 523, 404]:
                     if is_alive is not None and not is_alive():
                         return None, 0, None
                     time.sleep(RETRY_DELAY * (attempt + 1))
@@ -501,13 +516,14 @@ class UnifiedProxy:
             if time.time() - ts > SEGMENT_CACHE_TTL:
                 del self.segment_cache[key]
                 return None
-            return data
+            if len(data) > 0 and data[0] == 0x47:
+                return data
+            return None
 
     def store_segment(self, url, data):
         if not data:
             return
         if data[0] != 0x47:
-            pass
             return
         key = self.segment_key(url)
         with self.segment_cache_lock:
@@ -532,10 +548,9 @@ class UnifiedProxy:
                 if len(data) > 0 and data[0] == 0x47:
                     return data
                 else:
-                    pass
                     return None
-        except Exception as e:
-            pass
+        except Exception:
+            return None
         return None
 
     def download_segment_to_cache(self, url, headers):
@@ -555,7 +570,7 @@ class UnifiedProxy:
                 except Exception:
                     pass
                 self.store_segment(url, data)
-        except Exception as e:
+        except Exception:
             pass
         finally:
             if response is not None:
@@ -611,7 +626,6 @@ class UnifiedProxy:
                 with self.prefetching_lock:
                     for seg_url in to_fetch:
                         self.prefetching.discard(self.segment_key(seg_url))
-                pass
                 return []
             self.prefetch_threads_active += 1
         t = threading.Thread(target=self.download_segments_sequentially, args=(to_fetch, headers, channel_key))
@@ -628,6 +642,19 @@ class UnifiedProxy:
                         self.prefetching.discard(self.segment_key(seg_url))
                     continue
             self.download_segment_to_cache(seg_url, headers)
+
+    def fetch_playlist(self, url, headers):
+        try:
+            response, status, _ = self.fetch_channel_with_fallback(
+                url, headers, max_retries=3, timeout=10
+            )
+            if response and status in (200, 206):
+                content = response.read()
+                response.close()
+                return content
+        except Exception:
+            pass
+        return None
 
     def rewrite_m3u8_urls(self, playlist_content, base_url, proxy_host, headers=None, prefetch=True, channel_key=None):
         segment_urls = []
@@ -675,6 +702,17 @@ class UnifiedProxy:
             self.prefetch_segments(segment_urls, headers, channel_key=channel_key)
         return '\n'.join(lines)
 
+    def _send_error(self, wfile, code, message=""):
+        try:
+            body = f"{code} {message}".encode()
+            wfile.write(f"HTTP/1.1 {code} {message}\r\n".encode())
+            wfile.write(b"Content-Type: text/plain\r\n")
+            wfile.write(f"Content-Length: {len(body)}\r\n".encode())
+            wfile.write(b"Connection: close\r\n\r\n")
+            wfile.write(body)
+        except Exception:
+            pass
+
     def _send_segment(self, wfile, data):
         try:
             wfile.write(b"HTTP/1.1 200 OK\r\n")
@@ -684,17 +722,6 @@ class UnifiedProxy:
             wfile.write(f"Content-Length: {len(data)}\r\n".encode())
             wfile.write(b"\r\n")
             wfile.write(data)
-        except Exception as e:
-            pass
-
-    def _send_error(self, wfile, code, message=""):
-        try:
-            body = f"{code} {message}".encode()
-            wfile.write(f"HTTP/1.1 {code} {message}\r\n".encode())
-            wfile.write(b"Content-Type: text/plain\r\n")
-            wfile.write(f"Content-Length: {len(body)}\r\n".encode())
-            wfile.write(b"Connection: close\r\n\r\n")
-            wfile.write(body)
         except Exception:
             pass
 
@@ -713,7 +740,6 @@ class UnifiedProxy:
             return
 
         is_ts_segment = '.ts' in url.lower() or '/segment/' in url.lower()
-
         if is_ts_segment:
             cached = self.get_cached_segment(url)
             if cached:
@@ -721,6 +747,30 @@ class UnifiedProxy:
                 return
             segment_data = self.download_complete_segment(url, headers)
             if segment_data is None:
+                if self.current_playlist_url:
+                    new_playlist = self.fetch_playlist(self.current_playlist_url, self.current_playlist_headers)
+                    if new_playlist:
+                        proxy_host = "127.0.0.1:{}".format(get_active_port())
+                        base_url = self.current_playlist_url.rsplit('/', 1)[0]
+                        rewritten = self.rewrite_m3u8_urls(
+                            new_playlist.decode('utf-8', errors='ignore'),
+                            base_url, proxy_host, headers,
+                            channel_key=self.channel_key(self.current_playlist_url)
+                        )
+                        segment_urls = []
+                        for line in rewritten.split('\n'):
+                            if not line.startswith('#') and line.strip():
+                                segment_urls.append(line.strip())
+                        if segment_urls:
+                            new_seg_url = segment_urls[0]
+                            match = re.search(r'url=([^&]+)', new_seg_url)
+                            if match:
+                                original_seg = unquote(match.group(1))
+                                new_data = self.download_complete_segment(original_seg, headers)
+                                if new_data:
+                                    self.store_segment(original_seg, new_data)
+                                    self._send_segment(wfile, new_data)
+                                    return
                 self._send_error(wfile, 503, "Segmento indisponivel")
                 return
             self.store_segment(url, segment_data)
@@ -729,6 +779,9 @@ class UnifiedProxy:
 
         cache = self.get_channel_cache(url)
         is_playlist_url = '.m3u8' in url.lower()
+        self.current_playlist_url = url
+        self.current_playlist_headers = headers
+
         if not is_playlist_url:
             cached_segment = self.get_cached_segment(url)
             if cached_segment:
@@ -794,28 +847,14 @@ class UnifiedProxy:
         response = None
         stream_slot_acquired = self.acquire_stream_slot()
         if not stream_slot_acquired:
-            pass
             return
         try:
-            pass
             response, status_code, content_encoding = self.fetch_channel_with_fallback(
                 url, headers, None, cache, is_alive=is_client_alive
             )
             if response is None:
-                recovery_chunks = cache.get_recovery_chunks(CACHE_DURATION_SECONDS)
-                if recovery_chunks:
-                    if not safe_write(b"HTTP/1.1 200 OK\r\n"
-                                      b"Content-Type: video/mp2t\r\n"
-                                      b"Access-Control-Allow-Origin: *\r\n"
-                                      b"Cache-Control: no-cache\r\n"
-                                      b"Connection: keep-alive\r\n\r\n"):
-                        return
-                    for chunk in recovery_chunks:
-                        if not safe_write(chunk):
-                            return
-                        time.sleep(0.03)
-                else:
-                    return
+                self._send_error(wfile, 503, "Origem indisponivel")
+                return
             if response and status_code in [200, 206]:
                 content_type = response.headers.get('content-type', '').lower()
                 content_url = response.geturl()
@@ -844,8 +883,7 @@ class UnifiedProxy:
                                    b"Cache-Control: no-cache\r\n\r\n" +
                                    rewritten.encode('utf-8'))
                         return
-                    except Exception as e:
-                        pass
+                    except Exception:
                         return
                 content_length_header = response.headers.get('content-length')
                 try:
@@ -854,7 +892,6 @@ class UnifiedProxy:
                     expected_length = None
 
                 bytes_received = 0
-
                 header_bytes = ("HTTP/1.1 {} OK\r\n".format(206 if status_code == 206 else 200) +
                                 "Content-Type: video/mp2t\r\n"
                                 "Access-Control-Allow-Origin: *\r\n"
@@ -873,13 +910,10 @@ class UnifiedProxy:
                 last_progress = time.time()
                 while not client_gone[0]:
                     if not is_client_alive():
-                        pass
                         break
                     if time.time() - last_progress > MAX_STALL_SECONDS:
-                        pass
                         break
                     if total_reconnects > MAX_TOTAL_RECONNECTS:
-                        pass
                         break
                     try:
                         if response:
@@ -904,48 +938,44 @@ class UnifiedProxy:
                                 if eof_reconnects > MAX_EOF_RECONNECTS:
                                     break
                         else:
-                            cache_chunks = cache.get_continuous_chunks(30)
-                            if cache_chunks:
-                                wrote_any = False
-                                for chunk in cache_chunks:
-                                    if not safe_write(chunk):
-                                        break
-                                    wrote_any = True
-                                    time.sleep(0.03)
-                                if client_gone[0]:
-                                    break
-                                if wrote_any:
-                                    last_progress = time.time()
                             total_reconnects += 1
                             if not is_client_alive():
                                 break
                             try:
-                                already_sent_before_reconnect = bytes_received
-                                resume_range = "bytes={}-".format(bytes_received) if bytes_received > 0 else None
-                                new_response, new_status, _ = self.fetch_channel_with_fallback(
-                                    url, headers, resume_range, cache,
-                                    is_alive=is_client_alive, max_retries=MAX_RECONNECT_RETRIES
-                                )
-                                if new_response and new_status == 200 and already_sent_before_reconnect > 0:
-                                    pass
-                                    new_response.close()
-                                    break
-                                if new_response and new_status in [200, 206]:
-                                    if response:
-                                        response.close()
-                                    response = new_response
-                                    if new_status == 200:
-                                        new_content_length = response.headers.get('content-length')
-                                        try:
-                                            expected_length = int(new_content_length) if new_content_length else None
-                                        except (TypeError, ValueError):
-                                            expected_length = None
-                                        bytes_received = 0
-                                    consecutive_errors = 0
-                                    eof_reconnects = 0
-                                    last_progress = time.time()
-                                    continue
-                            except:
+                                if self.current_playlist_url:
+                                    new_playlist = self.fetch_playlist(self.current_playlist_url, self.current_playlist_headers)
+                                    if new_playlist:
+                                        proxy_host = "127.0.0.1:{}".format(get_active_port())
+                                        base_url = self.current_playlist_url.rsplit('/', 1)[0]
+                                        rewritten = self.rewrite_m3u8_urls(
+                                            new_playlist.decode('utf-8', errors='ignore'),
+                                            base_url, proxy_host, headers,
+                                            channel_key=self.channel_key(self.current_playlist_url)
+                                        )
+                                        segment_urls = []
+                                        for line in rewritten.split('\n'):
+                                            if not line.startswith('#') and line.strip():
+                                                segment_urls.append(line.strip())
+                                        if segment_urls:
+                                            new_seg_url = segment_urls[0]
+                                            match = re.search(r'url=([^&]+)', new_seg_url)
+                                            if match:
+                                                original_seg = unquote(match.group(1))
+                                                new_response, new_status, _ = self.fetch_channel_with_fallback(
+                                                    original_seg, headers, None, cache,
+                                                    is_alive=is_client_alive, max_retries=MAX_RECONNECT_RETRIES
+                                                )
+                                                if new_response and new_status in [200, 206]:
+                                                    if response:
+                                                        response.close()
+                                                    response = new_response
+                                                    expected_length = None
+                                                    bytes_received = 0
+                                                    consecutive_errors = 0
+                                                    eof_reconnects = 0
+                                                    last_progress = time.time()
+                                                    continue
+                            except Exception:
                                 pass
                             if not is_client_alive():
                                 break
@@ -953,7 +983,7 @@ class UnifiedProxy:
                     except (BrokenPipeError, socket.error, ConnectionResetError, ConnectionAbortedError):
                         client_gone[0] = True
                         break
-                    except Exception as e:
+                    except Exception:
                         consecutive_errors += 1
                         if consecutive_errors >= 3:
                             total_reconnects += 1
@@ -963,39 +993,40 @@ class UnifiedProxy:
                                 if response:
                                     response.close()
                                     response = None
-                                already_sent_before_reconnect = bytes_received
-                                resume_range = "bytes={}-".format(bytes_received) if bytes_received > 0 else None
-                                new_response, new_status, _ = self.fetch_channel_with_fallback(
-                                    url, headers, resume_range, cache,
-                                    is_alive=is_client_alive, max_retries=MAX_RECONNECT_RETRIES
-                                )
-                                if new_response and new_status == 200 and already_sent_before_reconnect > 0:
-                                    pass
-                                    new_response.close()
-                                    break
-                                if new_response and new_status in [200, 206]:
-                                    response = new_response
-                                    if new_status == 200:
-                                        new_content_length = response.headers.get('content-length')
-                                        try:
-                                            expected_length = int(new_content_length) if new_content_length else None
-                                        except (TypeError, ValueError):
-                                            expected_length = None
-                                        bytes_received = 0
-                                    consecutive_errors = 0
-                                    last_progress = time.time()
-                                    continue
+                                if self.current_playlist_url:
+                                    new_playlist = self.fetch_playlist(self.current_playlist_url, self.current_playlist_headers)
+                                    if new_playlist:
+                                        proxy_host = "127.0.0.1:{}".format(get_active_port())
+                                        base_url = self.current_playlist_url.rsplit('/', 1)[0]
+                                        rewritten = self.rewrite_m3u8_urls(
+                                            new_playlist.decode('utf-8', errors='ignore'),
+                                            base_url, proxy_host, headers,
+                                            channel_key=self.channel_key(self.current_playlist_url)
+                                        )
+                                        segment_urls = []
+                                        for line in rewritten.split('\n'):
+                                            if not line.startswith('#') and line.strip():
+                                                segment_urls.append(line.strip())
+                                        if segment_urls:
+                                            new_seg_url = segment_urls[0]
+                                            match = re.search(r'url=([^&]+)', new_seg_url)
+                                            if match:
+                                                original_seg = unquote(match.group(1))
+                                                new_response, new_status, _ = self.fetch_channel_with_fallback(
+                                                    original_seg, headers, None, cache,
+                                                    is_alive=is_client_alive, max_retries=MAX_RECONNECT_RETRIES
+                                                )
+                                                if new_response and new_status in [200, 206]:
+                                                    response = new_response
+                                                    expected_length = None
+                                                    bytes_received = 0
+                                                    consecutive_errors = 0
+                                                    last_progress = time.time()
+                                                    continue
                             except:
                                 pass
-                        recovery = cache.get_continuous_chunks(20)
-                        if recovery:
-                            for chunk in recovery:
-                                if not safe_write(chunk):
-                                    break
-                                time.sleep(0.03)
-                            if client_gone[0]:
-                                break
-        except Exception as e:
+                        time.sleep(0.5)
+        except Exception:
             pass
         finally:
             if response:
@@ -1028,12 +1059,12 @@ class UnifiedProxy:
                 else:
                     response = urlopen(req, timeout=30)
                 return response
-            except Exception as e:
+            except Exception:
                 if attempt < MAX_RETRIES - 1:
                     time.sleep(RETRY_DELAY)
                     continue
-                pass
                 return None
+        return None
 
     def parse_range(self, range_header):
         if not range_header:
@@ -1133,20 +1164,23 @@ class UnifiedProxy:
                 wfile.write(chunk)
         except (BrokenPipeError, socket.error):
             pass
-        except Exception as e:
+        except Exception:
             pass
         finally:
             upstream.close()
 
 class ProxyHandler(socketserver.StreamRequestHandler):
     proxy = UnifiedProxy()
+
     def send_response(self, code, message=None):
         if message is None:
             message = http.client.responses.get(code, "OK")
         self.resp_statusline = f"HTTP/1.1 {code} {message}\r\n"
         self.resp_headers = []
+
     def send_header(self, key, value):
         self.resp_headers.append((key, value))
+
     def end_headers(self):
         try:
             has_conn = any(k.lower() == "connection" for k, _ in self.resp_headers)
@@ -1159,6 +1193,7 @@ class ProxyHandler(socketserver.StreamRequestHandler):
             self.wfile.write(data.encode("utf-8", "replace"))
         except Exception:
             pass
+
     def send_error(self, code, message=""):
         body = (f"{code} {message}").encode("utf-8", "replace")
         self.send_response(code)
@@ -1170,6 +1205,7 @@ class ProxyHandler(socketserver.StreamRequestHandler):
             self.wfile.write(body)
         except Exception:
             pass
+
     def handle(self):
         try:
             self.connection.settimeout(SOCKET_IDLE_TIMEOUT)
@@ -1228,8 +1264,7 @@ class ProxyHandler(socketserver.StreamRequestHandler):
                 self.do_HEAD()
             else:
                 self.do_GET()
-        except Exception as e:
-            pass
+        except Exception:
             try:
                 self.send_error(500, "Internal Server Error")
             except Exception:
@@ -1239,10 +1274,13 @@ class ProxyHandler(socketserver.StreamRequestHandler):
                 self.proxy.release_handler_slot()
             except Exception:
                 pass
+
     def do_GET(self):
         self.process_request()
+
     def do_HEAD(self):
         self.process_request()
+
     def do_OPTIONS(self):
         self.send_response(200)
         self.send_header('Access-Control-Allow-Origin', '*')
@@ -1250,9 +1288,9 @@ class ProxyHandler(socketserver.StreamRequestHandler):
         self.send_header('Access-Control-Allow-Headers', 'Range, Origin, Content-Type, Accept')
         self.send_header('Content-Length', '0')
         self.end_headers()
+
     def process_request(self):
         try:
-            pass
             url = self.proxy.extract_url_from_path(self.path)
             if not url:
                 html = """<html><body>
@@ -1265,7 +1303,6 @@ class ProxyHandler(socketserver.StreamRequestHandler):
                 self.end_headers()
                 self.wfile.write(html)
                 return
-            pass
             headers = {}
             for key, value in self.headers.items():
                 headers[key.lower()] = value
@@ -1273,10 +1310,9 @@ class ProxyHandler(socketserver.StreamRequestHandler):
                 self.proxy.handle_mp4_stream(url, self.command, headers, self.wfile)
             else:
                 self.proxy.handle_channel_stream(url, headers, self.wfile, getattr(self, 'connection', None), method=self.command)
-        except Exception as e:
-            pass
+        except Exception:
             try:
-                self.send_error(500, str(e))
+                self.send_error(500, "Internal Server Error")
             except Exception:
                 pass
 
@@ -1331,6 +1367,7 @@ class UnifiedServer:
         self.running = False
         self.monitor = None
         self.redirect_servers = []
+
     def bind_with_rotation(self):
         remaining = list(self.ports)
         preferred = read_persisted_port()
@@ -1347,11 +1384,11 @@ class UnifiedServer:
                 return server, p
             except OSError as e:
                 last_err = e
-                pass
                 continue
         raise NoPortAvailableError(
             "Nenhuma porta livre no pool de rotacao: {}".format(ordered)
         ) from last_err
+
     def start_backup_redirects(self):
         handler_cls = make_redirect_handler(self.port)
         for p in self.ports:
@@ -1365,15 +1402,14 @@ class UnifiedServer:
             th = threading.Thread(target=self.serve_redirects, args=(srv,), daemon=True)
             th.start()
             self.redirect_servers.append((srv, th))
-        if self.redirect_servers:
-            active_ports = [s.server_address[1] for s, _t in self.redirect_servers]
-            pass
+
     def serve_redirects(self, srv):
         while self.running:
             try:
                 srv.handle_request()
             except Exception:
                 break
+
     def stop_backup_redirects(self):
         for srv, _th in self.redirect_servers:
             try:
@@ -1381,6 +1417,7 @@ class UnifiedServer:
             except Exception:
                 pass
         self.redirect_servers = []
+
     def start(self, monitor=None):
         self.monitor = monitor
         self.running = True
@@ -1390,23 +1427,22 @@ class UnifiedServer:
             self.server.timeout = 1
             self.start_backup_redirects()
             ProxyHandler.proxy.start_maintenance()
-            pass
             while self.running:
                 if self.monitor and self.monitor.abortRequested():
-                    pass
                     break
                 try:
                     self.server.handle_request()
-                except OSError as e:
+                except OSError:
                     pass
-                except Exception as e:
+                except Exception:
                     pass
-        except NoPortAvailableError as e:
+        except NoPortAvailableError:
             pass
-        except Exception as e:
+        except Exception:
             pass
         finally:
             self.stop()
+
     def stop(self):
         self.running = False
         self.stop_backup_redirects()
@@ -1417,17 +1453,20 @@ class UnifiedServer:
                 except Exception:
                     pass
                 self.server = None
-        except Exception as e:
+        except Exception:
             pass
-        pass
+
     def is_running(self):
         return (
             self.running and
             self.server is not None
         )
+
 if __name__ == '__main__':
     server = UnifiedServer()
     try:
+        print("Iniciando Proxy Unificado com rotacao de portas: {}".format(PROXY_PORT_POOL))
         server.start()
     except KeyboardInterrupt:
+        print("Parando Proxy Unificado...")
         server.stop()
