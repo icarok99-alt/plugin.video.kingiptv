@@ -62,7 +62,7 @@
                 <font>font15</font>
                 <textcolor>FFFFFFFF</textcolor>
                 <shadowcolor>FF000000</shadowcolor>
-                <label>$ADDON[plugin.video.kingiptv 32030]</label>
+                <label>Procurando na fonte</label>
                 <visible>String.IsEmpty(Window(Home).Property(loading.phase2))</visible>
             </control>
 
@@ -76,7 +76,7 @@
                 <font>font15</font>
                 <textcolor>FFFFFFFF</textcolor>
                 <shadowcolor>FF000000</shadowcolor>
-                <label>$ADDON[plugin.video.kingiptv 32031]</label>
+                <label>Resolvendo o link</label>
                 <visible>!String.IsEmpty(Window(Home).Property(loading.phase2))</visible>
             </control>
 

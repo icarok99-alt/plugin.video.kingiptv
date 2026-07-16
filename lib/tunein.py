@@ -15,11 +15,8 @@ def radios_list(API):
             li = xbmcgui.ListItem(name)
             li.setProperty('IsPlayable', 'true')
             li.setArt({"icon": "DefaultVideo.png", "thumb": iconimage})
-            if kversion > 19:
-                info = li.getVideoInfoTag()
-                info.setMediaType('music')
-            else:
-                li.setInfo('music', {'mediatype': 'song'})
+            info = li.getVideoInfoTag()
+            info.setMediaType('music')
             li.setProperty('fanart_image', fanart)
             xbmcplugin.addDirectoryItem(handle=int(sys.argv[1]), url=stream, listitem=li, isFolder=False)
         end()

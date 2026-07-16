@@ -8,6 +8,7 @@ import xbmcaddon
 import xbmcgui
 
 from lib.xtream import epg_lookup_current_next, epg_format_range, get_epg_programs
+from lib import pluto
 from lib.loading_window import loading_manager
 
 ADDON = xbmcaddon.Addon()
@@ -59,11 +60,11 @@ class LiveMonitor(xbmc.Player):
 
 class BusySuppressor(object):
     def __init__(self):
-        self.stop = threading.Event()
+        self.stop_event = threading.Event()
         self.thread = None
 
     def run(self):
-        while not self.stop.wait(0.1):
+        while not self.stop_event.wait(0.1):
             try:
                 xbmc.executebuiltin('Dialog.Close(busydialog,true)')
                 xbmc.executebuiltin('Dialog.Close(busydialognocancel,true)')
@@ -71,12 +72,12 @@ class BusySuppressor(object):
                 pass
 
     def start(self):
-        self.stop.clear()
+        self.stop_event.clear()
         self.thread = threading.Thread(target=self.run, daemon=True)
         self.thread.start()
 
     def stop(self):
-        self.stop.set()
+        self.stop_event.set()
         if self.thread and self.thread.is_alive():
             self.thread.join(timeout=0.5)
         try:
@@ -159,7 +160,13 @@ class EPGDialog(xbmcgui.WindowXMLDialog):
         if programs is None:
             epg_channel_id = channel.get('epg_channel_id') or ''
             dns = channel.get('epg_dns') or ''
-            if epg_channel_id and dns:
+            if epg_channel_id and dns == pluto.PLUTO_DNS_SENTINEL:
+                try:
+                    programs = pluto.get_pluto_epg_programs(epg_channel_id, limit=48)
+                    programs = sorted(programs or [], key=lambda p: p.get('start') or 0)
+                except Exception:
+                    programs = []
+            elif epg_channel_id and dns:
                 try:
                     programs = get_epg_programs(epg_channel_id, dns, limit=48)
                     programs = sorted(programs or [], key=lambda p: p.get('start') or 0)

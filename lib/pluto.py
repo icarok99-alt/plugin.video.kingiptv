@@ -3,6 +3,7 @@
 import uuid
 import re
 import threading
+import time
 from datetime import datetime, timedelta, timezone
 from lib.helper import *
 from urllib.parse import quote_plus
@@ -44,8 +45,77 @@ def build_session():
 
 SESSION = build_session()
 
-epg_cache_lock = threading.Lock()
-epg_cache = {'data': None, 'day': None}
+epg_fetch_active = threading.Event()
+
+PLUTO_EPG_TTL = 86400
+PLUTO_EPG_CACHE_PATH = os.path.join(profile, 'epg_pluto_index.json')
+
+
+def _pluto_safe_read_json(path):
+    try:
+        if os.path.exists(path):
+            with open(path, 'r', encoding='utf-8') as f:
+                return json.load(f)
+    except Exception:
+        pass
+    return {}
+
+
+def _pluto_safe_write_json(path, data):
+    try:
+        tmp = path + '.tmp'
+        with open(tmp, 'w', encoding='utf-8') as f:
+            json.dump(data, f, ensure_ascii=False)
+        try:
+            if os.path.exists(path):
+                os.remove(path)
+        except Exception:
+            pass
+        os.rename(tmp, path)
+        return True
+    except Exception:
+        return False
+
+
+def load_pluto_epg_disk():
+    today = current_day_key()
+    cached = _pluto_safe_read_json(PLUTO_EPG_CACHE_PATH)
+    if cached.get('day') != today:
+        return None
+    generated_at = int(cached.get('generated_at') or 0)
+    if not generated_at or (time.time() - generated_at) >= PLUTO_EPG_TTL:
+        return None
+    channels = cached.get('channels')
+    if not isinstance(channels, list) or not channels:
+        return None
+    return channels
+
+
+def save_pluto_epg_disk(channels, day):
+    _pluto_safe_write_json(PLUTO_EPG_CACHE_PATH, {
+        'day': day,
+        'generated_at': int(time.time()),
+        'channels': channels,
+    })
+
+
+def ensure_pluto_epg_background():
+    if load_pluto_epg_disk() is not None:
+        return
+    if epg_fetch_active.is_set():
+        return
+
+    def worker():
+        epg_fetch_active.set()
+        try:
+            playlist_pluto_epg()
+        except Exception as e:
+            log(f'ensure_pluto_epg_background: erro: {e}')
+        finally:
+            epg_fetch_active.clear()
+
+    t = threading.Thread(target=worker, daemon=True)
+    t.start()
 
 
 def parse_iso_datetime(s):
@@ -73,6 +143,55 @@ def get_current_time():
 
 def current_day_key():
     return get_current_time().strftime('%Y-%m-%d')
+
+PLUTO_DNS_SENTINEL = '__pluto__'
+
+PLUTO_PROGRAMS_INDEX_LOCK = threading.Lock()
+PLUTO_PROGRAMS_INDEX = {'data': None, 'day': None}
+
+
+def _pluto_programs_index():
+    today = current_day_key()
+    with PLUTO_PROGRAMS_INDEX_LOCK:
+        if PLUTO_PROGRAMS_INDEX['data'] is not None and PLUTO_PROGRAMS_INDEX['day'] == today:
+            return PLUTO_PROGRAMS_INDEX['data']
+    channels = load_pluto_epg_disk() or []
+    index = {}
+    for ch in channels:
+        index[ch.get('name') or ''] = ch.get('programs') or []
+    with PLUTO_PROGRAMS_INDEX_LOCK:
+        PLUTO_PROGRAMS_INDEX['data'] = index
+        PLUTO_PROGRAMS_INDEX['day'] = today
+    return index
+
+
+def get_pluto_epg_programs(channel_name, limit=48):
+    index = _pluto_programs_index()
+    programs = index.get(channel_name) or []
+    now_ts = int(time.time())
+    out = []
+    for p in programs:
+        if (p.get('end') or 0) > now_ts - 300:
+            out.append(p)
+        if len(out) >= limit:
+            break
+    return out
+
+
+def to_lazy_channels(channels):
+    lite = []
+    for ch in channels or []:
+        name = ch.get('name') or ''
+        lite.append({
+            'name': name,
+            'icon': ch.get('icon'),
+            'url': ch.get('url'),
+            'programs': None,
+            'epg_channel_id': name,
+            'epg_dns': PLUTO_DNS_SENTINEL,
+        })
+    return lite
+
 
 def playlist_pluto():
     channels_kodi = []
@@ -182,10 +301,9 @@ def playlist_pluto():
 def playlist_pluto_epg(force_refresh=False):
     today = current_day_key()
     if not force_refresh:
-        with epg_cache_lock:
-            cached = epg_cache['data']
-            if cached is not None and epg_cache['day'] == today:
-                return cached
+        disk_channels = load_pluto_epg_disk()
+        if disk_channels is not None:
+            return disk_channels
 
     result = []
     try:
@@ -295,8 +413,6 @@ def playlist_pluto_epg(force_refresh=False):
         log(f'playlist_pluto_epg: erro geral: {e}')
 
     if result:
-        with epg_cache_lock:
-            epg_cache['data'] = result
-            epg_cache['day'] = today
+        save_pluto_epg_disk(result, today)
 
     return result

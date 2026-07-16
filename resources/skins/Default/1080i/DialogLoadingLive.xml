@@ -62,7 +62,7 @@
                 <font>font15</font>
                 <textcolor>FFFFFFFF</textcolor>
                 <shadowcolor>FF000000</shadowcolor>
-                <label>$ADDON[plugin.video.kingiptv 32137]</label>
+                <label>Aguarde enquanto a reprodução inicia...</label>
             </control>
 
         </control>
