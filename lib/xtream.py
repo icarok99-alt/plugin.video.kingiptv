@@ -13,6 +13,7 @@ from lib.helper import *
 import re
 import time
 from urllib.parse import urlparse, parse_qs
+
 IPTV_PROBLEM_LOG = translate(os.path.join(profile, 'iptv_problems_log.txt'))
 REQUEST_TIMEOUT = 10
 MAX_RETRIES = 1
@@ -101,6 +102,7 @@ def first_clean_text(data, *keys):
         if value:
             return value
     return ''
+
 EMOJI_PATTERN = re.compile(
     "["
     "\U0001F1E0-\U0001F1FF"
@@ -146,6 +148,15 @@ def clean_category_name(name):
 def clean_channel_name(name):
     if not name:
         return name
+    sufixos_res = [
+        'HD', 'FHD', 'SD', '4K', 'UHD', 'HD+', 'HD¹', 'HD²', 'HD2', 'HD1',
+        'FHD¹', 'FHD²', 'SD¹', 'SD²', '4K¹', '4K²', 'UHD¹', 'UHD²',
+        'H264', 'H265', 'H264¹', 'H264²', 'H265¹', 'H265²',
+        'PLUS', 'PLUS¹', 'PLUS²', 'PREMIUM', 'PREMIUM¹', 'PREMIUM²',
+        'MAX', 'MAX¹', 'MAX²',
+    ]
+    pattern = r'\[(' + '|'.join(re.escape(s) for s in sufixos_res) + r')\]'
+    name = re.sub(pattern, r'\1', name)
     name = re.sub(r'\s*\[\d{1,2}:\d{2}\s*-\s*\d{1,2}:\d{2}\]', '', name)
     name = re.sub(r'\s*\+\s*\d+\.?\d*\s*min', '', name)
     name = re.sub(r'\s+', ' ', name).strip()
@@ -160,22 +171,17 @@ def clean_channel_name(name):
             break
     if not resto:
         return name
-    sufixos_canal = [
-        'HD', 'FHD', 'SD', '4K', 'UHD', 'HD+', 'HD¹', 'HD²', 'HD2', 'HD1',
-        'FHD¹', 'FHD²', 'SD¹', 'SD²', '4K¹', '4K²', 'UHD¹', 'UHD²',
-        'H264', 'H265', 'H264¹', 'H264²', 'H265¹', 'H265²',
-        'PLUS', 'PLUS¹', 'PLUS²', 'PREMIUM', 'PREMIUM¹', 'PREMIUM²',
-        'MAX', 'MAX¹', 'MAX²',
-    ]
     palavras = resto.split()
     ultimo_sufixo_idx = -1
     for idx, palavra in enumerate(palavras):
         palavra_limpa = re.sub(r'[¹²+]', '', palavra.upper())
-        if palavra.upper() in sufixos_canal or palavra_limpa in sufixos_canal:
+        if palavra.upper() in sufixos_res or palavra_limpa in sufixos_res:
             ultimo_sufixo_idx = idx
     if ultimo_sufixo_idx >= 0:
         canal_str = ' '.join(palavras[:ultimo_sufixo_idx + 1])
         name = (' '.join(tags_inicio) + ' ' + canal_str).strip() if tags_inicio else canal_str
+    else:
+        name = (' '.join(tags_inicio) + ' ' + resto).strip() if tags_inicio else resto
     if '-' in name:
         name = re.sub(r'\s*-\s*', ' - ', name)
     return re.sub(r'\s+', ' ', name).strip()
@@ -653,6 +659,7 @@ def ensure_epg_background(dns, username, password):
     t = threading.Thread(target=worker)
     t.daemon = True
     t.start()
+
 VOD_CACHE_TTL = 86400
 SERIES_CACHE_TTL = 86400
 
