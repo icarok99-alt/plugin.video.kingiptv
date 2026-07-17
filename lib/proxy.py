@@ -10,7 +10,6 @@ import re
 from urllib.parse import urlparse, unquote, urljoin, quote
 from urllib.request import Request, urlopen
 from urllib.error import URLError, HTTPError
-import binascii
 import ssl
 from collections import deque
 import gzip
@@ -18,10 +17,7 @@ import zlib
 import socketserver
 import http.client
 from urllib.parse import urlsplit
-try:
-    import xbmc
-except Exception:
-    xbmc = None
+
 try:
     import xbmcvfs
 except Exception:
@@ -98,15 +94,15 @@ MAX_RETRIES = 3
 MAX_RECONNECT_RETRIES = 2
 RETRY_DELAY = 0.3
 BUFFER_SIZE = 32768
-MAX_EOF_RECONNECTS = 40
-MAX_TOTAL_RECONNECTS = 60
-MAX_STALL_SECONDS = 45
+MAX_EOF_RECONNECTS = 20
+MAX_TOTAL_RECONNECTS = 30
+MAX_STALL_SECONDS = 60
 CLIENT_ALIVE_CHECK_EVERY = 1.0
 MAX_ACTIVE_CHANNEL_STREAMS = 12
 CACHE_ENTRY_TTL = 300
 CACHE_CLEANUP_INTERVAL = 60
-PREFETCH_SEGMENT_COUNT = 3
-SEGMENT_CACHE_TTL = 30
+PREFETCH_SEGMENT_COUNT = 1
+SEGMENT_CACHE_TTL = 600
 SEGMENT_CACHE_MAX = 60
 SOCKET_IDLE_TIMEOUT = 20
 SOCKET_STREAM_TIMEOUT = 20
@@ -115,6 +111,10 @@ PREFETCH_MAX_RETRIES = 2
 MAX_PREFETCH_THREADS = 6
 MAX_CONCURRENT_HANDLERS = 40
 CHANNEL_IDLE_ABORT_SECONDS = 15
+PLAYLIST_REFRESH_INTERVAL = 600
+
+TOKEN_ERROR_CODES = {403, 404, 410, 451, 503}
+
 CHROME_UA = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
     "AppleWebKit/537.36 (KHTML, like Gecko) "
@@ -333,6 +333,18 @@ class UnifiedProxy:
         self.active_handlers_lock = threading.Lock()
         self.current_playlist_url = None
         self.current_playlist_headers = None
+        self.playlist_last_refresh = {}
+        self.channel_ua_cache = {}
+        self.channel_ua_lock = threading.Lock()
+        self.current_playlist_segments = []
+        self.current_playlist_base = None
+
+    def get_user_agent_for_channel(self, channel_url):
+        key = self.channel_key(channel_url)
+        with self.channel_ua_lock:
+            if key not in self.channel_ua_cache:
+                self.channel_ua_cache[key] = random.choice(UA_POOL)
+            return self.channel_ua_cache[key]
 
     def start_maintenance(self):
         with self.maintenance_lock:
@@ -347,25 +359,21 @@ class UnifiedProxy:
             time.sleep(CACHE_CLEANUP_INTERVAL)
             now = time.time()
             try:
-                removed = 0
                 with self.stream_lock:
                     stale = [k for k, ts in self.channel_cache_last_used.items()
                              if now - ts > CACHE_ENTRY_TTL]
                     for k in stale:
                         self.channel_caches.pop(k, None)
                         self.channel_cache_last_used.pop(k, None)
-                        removed += 1
-                if stale:
-                    with self.warmup_lock:
-                        for k in stale:
-                            self.channel_warmed_up.discard(k)
+                with self.warmup_lock:
+                    for k in stale:
+                        self.channel_warmed_up.discard(k)
                 with self.cache_lock:
                     stale = [k for k, ts in self.mp4_cache_last_used.items()
                              if now - ts > CACHE_ENTRY_TTL]
                     for k in stale:
                         self.mp4_caches.pop(k, None)
                         self.mp4_cache_last_used.pop(k, None)
-                        removed += 1
             except Exception:
                 pass
 
@@ -449,13 +457,11 @@ class UnifiedProxy:
         if headers is None:
             headers = {}
         retries = max_retries if max_retries is not None else MAX_RETRIES
+        fixed_ua = self.get_user_agent_for_channel(url)
         for attempt in range(retries):
             if is_alive is not None and not is_alive():
                 return None, 0, None
-            if attempt == 0:
-                user_agent = CHROME_UA
-            else:
-                user_agent = self.get_random_user_agent()
+            user_agent = fixed_ua if attempt == 0 else self.get_random_user_agent()
             origin = get_origin(url)
             req_headers = {
                 'User-Agent': user_agent,
@@ -488,7 +494,9 @@ class UnifiedProxy:
                     pass
                 return response, status_code, content_encoding
             except HTTPError as e:
-                if attempt < retries - 1 and e.code in [403, 406, 451, 500, 502, 503, 504, 523, 404]:
+                if e.code in TOKEN_ERROR_CODES:
+                    return None, e.code, None
+                if attempt < retries - 1:
                     if is_alive is not None and not is_alive():
                         return None, 0, None
                     time.sleep(RETRY_DELAY * (attempt + 1))
@@ -533,28 +541,25 @@ class UnifiedProxy:
                 if oldest_key != key:
                     del self.segment_cache[oldest_key]
 
-    def download_complete_segment(self, url, headers, timeout=20):
-        try:
-            response, status, content_encoding = self.fetch_channel_with_fallback(
-                url, headers, max_retries=MAX_RETRIES, timeout=timeout
-            )
-            if response and status in (200, 206):
-                data = response.read()
-                response.close()
-                if content_encoding == 'gzip':
-                    data = gzip.decompress(data)
-                elif content_encoding == 'deflate':
-                    data = zlib.decompress(data)
-                if len(data) > 0 and data[0] == 0x47:
-                    return data
-                else:
-                    return None
-        except Exception:
+    def download_complete_segment(self, url, headers, timeout=20, playlist_refresh_callback=None):
+        response, status, content_encoding = self.fetch_channel_with_fallback(
+            url, headers, max_retries=MAX_RETRIES, timeout=timeout
+        )
+        if response and status in (200, 206):
+            data = response.read()
+            response.close()
+            if content_encoding == 'gzip':
+                data = gzip.decompress(data)
+            elif content_encoding == 'deflate':
+                data = zlib.decompress(data)
+            if len(data) > 0 and data[0] == 0x47:
+                return data
             return None
+        if status in TOKEN_ERROR_CODES and playlist_refresh_callback:
+            playlist_refresh_callback()
         return None
 
     def download_segment_to_cache(self, url, headers):
-        key = self.segment_key(url)
         response = None
         try:
             response, status_code, content_encoding = self.fetch_channel_with_fallback(
@@ -579,7 +584,7 @@ class UnifiedProxy:
                 except Exception:
                     pass
             with self.prefetching_lock:
-                self.prefetching.discard(key)
+                self.prefetching.discard(self.segment_key(url))
             with self.prefetch_threads_lock:
                 if self.prefetch_threads_active > 0:
                     self.prefetch_threads_active -= 1
@@ -646,7 +651,7 @@ class UnifiedProxy:
     def fetch_playlist(self, url, headers):
         try:
             response, status, _ = self.fetch_channel_with_fallback(
-                url, headers, max_retries=3, timeout=10
+                url, headers, max_retries=2, timeout=10
             )
             if response and status in (200, 206):
                 content = response.read()
@@ -655,6 +660,24 @@ class UnifiedProxy:
         except Exception:
             pass
         return None
+
+    def refresh_playlist(self, playlist_url, headers):
+        content = self.fetch_playlist(playlist_url, headers)
+        if content:
+            try:
+                playlist_text = content.decode('utf-8', errors='ignore')
+                base_url = playlist_url.rsplit('/', 1)[0]
+                segments = []
+                for line in playlist_text.split('\n'):
+                    line = line.strip()
+                    if line and not line.startswith('#'):
+                        absolute = urljoin(base_url + '/', line)
+                        if absolute.startswith(('http://', 'https://')):
+                            segments.append(absolute)
+                return playlist_text, base_url, segments
+            except Exception:
+                pass
+        return None, None, None
 
     def rewrite_m3u8_urls(self, playlist_content, base_url, proxy_host, headers=None, prefetch=True, channel_key=None):
         segment_urls = []
@@ -745,32 +768,32 @@ class UnifiedProxy:
             if cached:
                 self._send_segment(wfile, cached)
                 return
-            segment_data = self.download_complete_segment(url, headers)
-            if segment_data is None:
+
+            def playlist_refresh():
                 if self.current_playlist_url:
-                    new_playlist = self.fetch_playlist(self.current_playlist_url, self.current_playlist_headers)
+                    new_playlist, new_base, new_segments = self.refresh_playlist(
+                        self.current_playlist_url, self.current_playlist_headers
+                    )
                     if new_playlist:
-                        proxy_host = "127.0.0.1:{}".format(get_active_port())
-                        base_url = self.current_playlist_url.rsplit('/', 1)[0]
-                        rewritten = self.rewrite_m3u8_urls(
-                            new_playlist.decode('utf-8', errors='ignore'),
-                            base_url, proxy_host, headers,
-                            channel_key=self.channel_key(self.current_playlist_url)
-                        )
-                        segment_urls = []
-                        for line in rewritten.split('\n'):
-                            if not line.startswith('#') and line.strip():
-                                segment_urls.append(line.strip())
-                        if segment_urls:
-                            new_seg_url = segment_urls[0]
-                            match = re.search(r'url=([^&]+)', new_seg_url)
-                            if match:
-                                original_seg = unquote(match.group(1))
-                                new_data = self.download_complete_segment(original_seg, headers)
-                                if new_data:
-                                    self.store_segment(original_seg, new_data)
-                                    self._send_segment(wfile, new_data)
-                                    return
+                        self.current_playlist_content = new_playlist
+                        self.current_playlist_base = new_base
+                        self.current_playlist_segments = new_segments
+                    else:
+                        pass
+
+            segment_data = self.download_complete_segment(
+                url, headers, playlist_refresh_callback=playlist_refresh
+            )
+            if segment_data is None:
+                if self.current_playlist_segments:
+                    old_filename = url.split('/')[-1].split('?')[0]
+                    for seg in self.current_playlist_segments:
+                        if seg.endswith(old_filename):
+                            new_data = self.download_complete_segment(seg, headers)
+                            if new_data:
+                                self.store_segment(seg, new_data)
+                                self._send_segment(wfile, new_data)
+                                return
                 self._send_error(wfile, 503, "Segmento indisponivel")
                 return
             self.store_segment(url, segment_data)
@@ -778,11 +801,13 @@ class UnifiedProxy:
             return
 
         cache = self.get_channel_cache(url)
-        is_playlist_url = '.m3u8' in url.lower()
         self.current_playlist_url = url
         self.current_playlist_headers = headers
+        self.current_playlist_content = None
+        self.current_playlist_base = None
+        self.current_playlist_segments = []
 
-        if not is_playlist_url:
+        if not url.lower().endswith('.m3u8'):
             cached_segment = self.get_cached_segment(url)
             if cached_segment:
                 try:
@@ -867,13 +892,22 @@ class UnifiedProxy:
                             content = zlib.decompress(raw_content)
                         else:
                             content = raw_content
-                    except:
+                    except Exception:
                         content = raw_content
                     try:
                         playlist_text = content.decode('utf-8', errors='ignore')
+                        self.current_playlist_content = playlist_text
+                        self.current_playlist_base = content_url.rsplit('/', 1)[0]
+                        self.current_playlist_segments = []
+                        for line in playlist_text.split('\n'):
+                            line = line.strip()
+                            if line and not line.startswith('#'):
+                                absolute = urljoin(self.current_playlist_base + '/', line)
+                                if absolute.startswith(('http://', 'https://')):
+                                    self.current_playlist_segments.append(absolute)
                         proxy_host = "127.0.0.1:{}".format(get_active_port())
-                        base_url = content_url.rsplit('/', 1)[0]
-                        rewritten = self.rewrite_m3u8_urls(playlist_text, base_url, proxy_host, headers,
+                        rewritten = self.rewrite_m3u8_urls(playlist_text, self.current_playlist_base,
+                                                            proxy_host, headers,
                                                             channel_key=self.channel_key(url))
                         response.close()
                         safe_write(b"HTTP/1.1 200 OK\r\n"
@@ -929,7 +963,7 @@ class UnifiedProxy:
                             else:
                                 try:
                                     response.close()
-                                except:
+                                except Exception:
                                     pass
                                 response = None
                                 if expected_length is not None and bytes_received >= expected_length:
@@ -941,40 +975,50 @@ class UnifiedProxy:
                             total_reconnects += 1
                             if not is_client_alive():
                                 break
+                            refreshed = False
+                            if self.current_playlist_url:
+                                new_playlist, new_base, new_segments = self.refresh_playlist(
+                                    self.current_playlist_url, self.current_playlist_headers
+                                )
+                                if new_playlist:
+                                    self.current_playlist_content = new_playlist
+                                    self.current_playlist_base = new_base
+                                    self.current_playlist_segments = new_segments
+                                    old_filename = url.split('/')[-1].split('?')[0]
+                                    for seg in new_segments:
+                                        if seg.endswith(old_filename):
+                                            new_response, new_status, _ = self.fetch_channel_with_fallback(
+                                                seg, headers, None, cache,
+                                                is_alive=is_client_alive, max_retries=MAX_RECONNECT_RETRIES
+                                            )
+                                            if new_response and new_status in [200, 206]:
+                                                if response:
+                                                    response.close()
+                                                response = new_response
+                                                expected_length = None
+                                                bytes_received = 0
+                                                consecutive_errors = 0
+                                                eof_reconnects = 0
+                                                last_progress = time.time()
+                                                refreshed = True
+                                                break
+                            if refreshed:
+                                continue
                             try:
-                                if self.current_playlist_url:
-                                    new_playlist = self.fetch_playlist(self.current_playlist_url, self.current_playlist_headers)
-                                    if new_playlist:
-                                        proxy_host = "127.0.0.1:{}".format(get_active_port())
-                                        base_url = self.current_playlist_url.rsplit('/', 1)[0]
-                                        rewritten = self.rewrite_m3u8_urls(
-                                            new_playlist.decode('utf-8', errors='ignore'),
-                                            base_url, proxy_host, headers,
-                                            channel_key=self.channel_key(self.current_playlist_url)
-                                        )
-                                        segment_urls = []
-                                        for line in rewritten.split('\n'):
-                                            if not line.startswith('#') and line.strip():
-                                                segment_urls.append(line.strip())
-                                        if segment_urls:
-                                            new_seg_url = segment_urls[0]
-                                            match = re.search(r'url=([^&]+)', new_seg_url)
-                                            if match:
-                                                original_seg = unquote(match.group(1))
-                                                new_response, new_status, _ = self.fetch_channel_with_fallback(
-                                                    original_seg, headers, None, cache,
-                                                    is_alive=is_client_alive, max_retries=MAX_RECONNECT_RETRIES
-                                                )
-                                                if new_response and new_status in [200, 206]:
-                                                    if response:
-                                                        response.close()
-                                                    response = new_response
-                                                    expected_length = None
-                                                    bytes_received = 0
-                                                    consecutive_errors = 0
-                                                    eof_reconnects = 0
-                                                    last_progress = time.time()
-                                                    continue
+                                new_response, new_status, _ = self.fetch_channel_with_fallback(
+                                    url, headers, None, cache,
+                                    is_alive=is_client_alive, max_retries=MAX_RECONNECT_RETRIES
+                                )
+                                if new_response and new_status in [200, 206]:
+                                    if response:
+                                        response.close()
+                                    response = new_response
+                                    expected_length = None
+                                    bytes_received = 0
+                                    consecutive_errors = 0
+                                    eof_reconnects = 0
+                                    last_progress = time.time()
+                                    continue
                             except Exception:
                                 pass
                             if not is_client_alive():
@@ -989,31 +1033,24 @@ class UnifiedProxy:
                             total_reconnects += 1
                             if not is_client_alive():
                                 break
+                            refreshed = False
                             try:
                                 if response:
                                     response.close()
                                     response = None
                                 if self.current_playlist_url:
-                                    new_playlist = self.fetch_playlist(self.current_playlist_url, self.current_playlist_headers)
+                                    new_playlist, new_base, new_segments = self.refresh_playlist(
+                                        self.current_playlist_url, self.current_playlist_headers
+                                    )
                                     if new_playlist:
-                                        proxy_host = "127.0.0.1:{}".format(get_active_port())
-                                        base_url = self.current_playlist_url.rsplit('/', 1)[0]
-                                        rewritten = self.rewrite_m3u8_urls(
-                                            new_playlist.decode('utf-8', errors='ignore'),
-                                            base_url, proxy_host, headers,
-                                            channel_key=self.channel_key(self.current_playlist_url)
-                                        )
-                                        segment_urls = []
-                                        for line in rewritten.split('\n'):
-                                            if not line.startswith('#') and line.strip():
-                                                segment_urls.append(line.strip())
-                                        if segment_urls:
-                                            new_seg_url = segment_urls[0]
-                                            match = re.search(r'url=([^&]+)', new_seg_url)
-                                            if match:
-                                                original_seg = unquote(match.group(1))
+                                        self.current_playlist_content = new_playlist
+                                        self.current_playlist_base = new_base
+                                        self.current_playlist_segments = new_segments
+                                        old_filename = url.split('/')[-1].split('?')[0]
+                                        for seg in new_segments:
+                                            if seg.endswith(old_filename):
                                                 new_response, new_status, _ = self.fetch_channel_with_fallback(
-                                                    original_seg, headers, None, cache,
+                                                    seg, headers, None, cache,
                                                     is_alive=is_client_alive, max_retries=MAX_RECONNECT_RETRIES
                                                 )
                                                 if new_response and new_status in [200, 206]:
@@ -1022,8 +1059,25 @@ class UnifiedProxy:
                                                     bytes_received = 0
                                                     consecutive_errors = 0
                                                     last_progress = time.time()
-                                                    continue
-                            except:
+                                                    refreshed = True
+                                                    break
+                            except Exception:
+                                pass
+                            if refreshed:
+                                continue
+                            try:
+                                new_response, new_status, _ = self.fetch_channel_with_fallback(
+                                    url, headers, None, cache,
+                                    is_alive=is_client_alive, max_retries=MAX_RECONNECT_RETRIES
+                                )
+                                if new_response and new_status in [200, 206]:
+                                    response = new_response
+                                    expected_length = None
+                                    bytes_received = 0
+                                    consecutive_errors = 0
+                                    last_progress = time.time()
+                                    continue
+                            except Exception:
                                 pass
                         time.sleep(0.5)
         except Exception:
@@ -1032,7 +1086,7 @@ class UnifiedProxy:
             if response:
                 try:
                     response.close()
-                except:
+                except Exception:
                     pass
             if stream_slot_acquired:
                 self.release_stream_slot()
@@ -1457,16 +1511,4 @@ class UnifiedServer:
             pass
 
     def is_running(self):
-        return (
-            self.running and
-            self.server is not None
-        )
-
-if __name__ == '__main__':
-    server = UnifiedServer()
-    try:
-        print("Iniciando Proxy Unificado com rotacao de portas: {}".format(PROXY_PORT_POOL))
-        server.start()
-    except KeyboardInterrupt:
-        print("Parando Proxy Unificado...")
-        server.stop()
+        return self.running and self.server is not None
