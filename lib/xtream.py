@@ -9,13 +9,13 @@ import threading
 import requests
 from requests.adapters import HTTPAdapter
 from requests.packages.urllib3.util.retry import Retry
-from lib.helper import *
+from lib.common import *
 import re
 import time
 from urllib.parse import urlparse, parse_qs
 
 IPTV_PROBLEM_LOG = translate(os.path.join(profile, 'iptv_problems_log.txt'))
-REQUEST_TIMEOUT = 10
+REQUEST_TIMEOUT = 5
 MAX_RETRIES = 1
 CACHE_FAILED_URLS = {}
 EPG_XML_TTL = 86400
@@ -785,32 +785,13 @@ def parselist(url):
     iptv = []
     session = create_session()
     try:
-        response = session.get(url, timeout=REQUEST_TIMEOUT)
-        url = response.json()['url']
-    except Exception:
-        pass
-    try:
-        if 'paste.kodi.tv' in url and 'documents' not in url and 'raw' not in url:
-            try:
-                key = url.split('/')[-1]
-                url = 'https://paste.kodi.tv/documents/' + key
-                src = session.get(url, timeout=REQUEST_TIMEOUT).json()['data']
-                for i in src.split('\n'):
-                    i = i.replace(' ', '')
-                    if 'http' in i and check_iptv(i):
-                        dns, username, password = extract_info(i)
-                        if dns and username and password:
-                            iptv.append((dns, username, password))
-            except Exception as e:
-                log_iptv_problem(url, 'Erro paste.kodi.tv: {}'.format(e))
-        else:
-            src = session.get(url, timeout=REQUEST_TIMEOUT).text
-            for i in src.split('\n'):
-                i = i.replace(' ', '')
-                if 'http' in i and check_iptv(i):
-                    dns, username, password = extract_info(i)
-                    if dns and username and password:
-                        iptv.append((dns, username, password))
+        src = session.get(url, timeout=REQUEST_TIMEOUT).text
+        for line in src.split('\n'):
+            line = line.replace(' ', '')
+            if 'http' in line and check_iptv(line):
+                dns, username, password = extract_info(line)
+                if dns and username and password:
+                    iptv.append((dns, username, password))
     except Exception as e:
         log_iptv_problem(url, 'Erro parselist: {}'.format(e))
     return iptv

@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 
-from lib.helper import *
+from lib.common import *
 import requests
 
 def radios_list(API):

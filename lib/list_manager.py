@@ -2,7 +2,7 @@
 
 import os
 import json
-from lib.helper import profile, translate, xbmcvfs
+from lib.common import profile, translate, xbmcvfs
 ACTIVE_LIST_FILE = translate(os.path.join(profile, 'active_list.json'))
 
 def ensure_profile():
