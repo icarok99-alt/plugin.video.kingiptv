@@ -1,0 +1,30 @@
+<fonts>
+    <fontset id="Default">
+        <font>
+            <name>font12</name>
+            <filename>arial.ttf</filename>
+            <size>20</size>
+        </font>
+        <font>
+            <name>font13</name>
+            <filename>arial.ttf</filename>
+            <size>22</size>
+        </font>
+        <font>
+            <name>font14</name>
+            <filename>arial.ttf</filename>
+            <size>25</size>
+        </font>
+        <font>
+            <name>font15</name>
+            <filename>arial.ttf</filename>
+            <size>28</size>
+        </font>
+        <font>
+            <name>font15_title</name>
+            <filename>arial.ttf</filename>
+            <size>30</size>
+            <style>bold</style>
+        </font>
+    </fontset>
+</fonts>

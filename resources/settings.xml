@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8" standalone="yes"?>
+<settings>
+<category label="Up Next">
+        <setting id="upnext_enabled" type="bool" label="Ativar Up Next" default="true"/>
+        <setting id="upnext_trigger_seconds" type="number" label="Mostrar notificação quando faltar (segundos)" default="30"/>
+        <setting id="upnext_countdown_seconds" type="number" label="Duração da contagem regressiva (segundos)" default="10"/>
+    </category>
+    <category label="Pular abertura">
+        <setting id="skip_intro_enabled" type="bool" label="Ativar pular abertura" default="true"/>
+        <setting id="skip_auto_skip" type="bool" label="Pular automaticamente (sem confirmação)" default="false"/>
+        <setting id="skip_countdown_seconds" type="number" label="Contagem regressiva em segundos" default="5"/>
+    </category>
+    <category label="Manutenção">
+        <setting label="Limpar cache de vídeos do Kodi (corrige duplicidade de itens assistidos)" type="action" action="RunScript(special://home/addons/plugin.video.kingiptv/lib/db_manager.py,clear_all)" option="close"/>
+    </category>
+</settings>
