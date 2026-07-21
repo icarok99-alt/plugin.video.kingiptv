@@ -200,7 +200,17 @@
                         <font>font12</font>
                         <textcolor>FFB0B0B0</textcolor>
                         <label>$INFO[ListItem.Property(secondary)]</label>
-                        <visible>!String.IsEmpty(ListItem.Property(secondary))</visible>
+                        <visible>!String.IsEmpty(ListItem.Property(secondary)) + String.IsEmpty(ListItem.Property(unavailable))</visible>
+                    </control>
+                    <control type="label">
+                        <posx>170</posx>
+                        <posy>61</posy>
+                        <width>660</width>
+                        <height>30</height>
+                        <font>font12</font>
+                        <textcolor>FFE05252</textcolor>
+                        <label>$INFO[ListItem.Property(secondary)]</label>
+                        <visible>!String.IsEmpty(ListItem.Property(unavailable))</visible>
                     </control>
                     <control type="label">
                         <posx>170</posx>
@@ -280,7 +290,17 @@
                         <font>font12</font>
                         <textcolor>FFF3B73B</textcolor>
                         <label>$INFO[ListItem.Property(secondary)]</label>
-                        <visible>!String.IsEmpty(ListItem.Property(secondary))</visible>
+                        <visible>!String.IsEmpty(ListItem.Property(secondary)) + String.IsEmpty(ListItem.Property(unavailable))</visible>
+                    </control>
+                    <control type="label">
+                        <posx>170</posx>
+                        <posy>61</posy>
+                        <width>660</width>
+                        <height>30</height>
+                        <font>font12</font>
+                        <textcolor>FFFF6B6B</textcolor>
+                        <label>$INFO[ListItem.Property(secondary)]</label>
+                        <visible>!String.IsEmpty(ListItem.Property(unavailable))</visible>
                     </control>
                     <control type="label">
                         <posx>170</posx>
