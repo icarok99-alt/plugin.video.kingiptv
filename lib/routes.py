@@ -227,13 +227,19 @@ def prompt_select_list():
         if is_active:
             preselect = n
         label = 'LISTA {0}'.format(n + 1)
-        display_label = label
+        try:
+            is_unavailable = bool(_account_has_known_problem(dns, username, password))
+        except Exception:
+            is_unavailable = False
+        status_parts = []
         if is_active:
-            display_label += ' (ATIVA)'
-        if _account_has_known_problem(dns, username, password):
-            display_label += ' (LISTA INDISPONÍVEL)'
+            status_parts.append('ATIVA')
+        if is_unavailable:
+            status_parts.append('LISTA INDISPONÍVEL')
         items.append({
-            'label': display_label,
+            'label': label,
+            'secondary': ' • '.join(status_parts),
+            'unavailable': is_unavailable,
             'description': WELCOME_DESC,
             'icon': ADDON_ICON,
             'payload': {'dns': dns, 'username': username, 'password': password, 'label': label},
