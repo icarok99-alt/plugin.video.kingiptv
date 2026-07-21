@@ -632,7 +632,6 @@ def build_epg_index(dns, username, password):
         log_iptv_problem(dns, f'Erro na indexação: {e}')
         return False
 
-OFFLINE_MARK_TTL = 3600
 OFFLINE_ACCOUNTS_FILE = os.path.join(profile, 'offline_accounts.json')
 
 def _offline_marker(dns, username, password):
@@ -643,7 +642,7 @@ def mark_account_offline(dns, username, password):
     data = safe_read_json(OFFLINE_ACCOUNTS_FILE)
     if not isinstance(data, dict):
         data = {}
-    data[marker] = int(time.time())
+    data[marker] = True
     safe_write_json(OFFLINE_ACCOUNTS_FILE, data)
 
 def clear_account_offline(dns, username, password):
@@ -653,17 +652,10 @@ def clear_account_offline(dns, username, password):
         data.pop(marker, None)
         safe_write_json(OFFLINE_ACCOUNTS_FILE, data)
 
-def is_account_marked_offline(dns, username, password, ttl=OFFLINE_MARK_TTL):
+def is_account_marked_offline(dns, username, password):
     marker = _offline_marker(dns, username, password)
     data = safe_read_json(OFFLINE_ACCOUNTS_FILE)
-    if not isinstance(data, dict) or marker not in data:
-        return False
-    ts = int(data.get(marker) or 0)
-    if not ts or (time.time() - ts) >= ttl:
-        data.pop(marker, None)
-        safe_write_json(OFFLINE_ACCOUNTS_FILE, data)
-        return False
-    return True
+    return bool(isinstance(data, dict) and marker in data)
 
 def _account_marked_offline(dns, username, password):
     return is_account_marked_offline(dns, username, password)
@@ -1020,4 +1012,3 @@ class API:
         except Exception as e:
             log_iptv_problem(url, 'Erro ao listar episódios: {}'.format(e))
         return itens
-
