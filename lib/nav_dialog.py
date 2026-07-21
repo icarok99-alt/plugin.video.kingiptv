@@ -373,6 +373,7 @@ class NavDialog(xbmcgui.WindowXML):
                 art = entry.get('icon') or entry.get('poster') or ''
                 li.setArt({'icon': art, 'thumb': art})
                 li.setProperty('secondary', entry.get('secondary', '') or '')
+                li.setProperty('unavailable', 'true' if entry.get('unavailable') else '')
                 list_items.append(li)
         elif self.mode == 'epg':
             for ch in self.channels:
