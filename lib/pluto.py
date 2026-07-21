@@ -5,7 +5,7 @@ import re
 import threading
 import time
 from datetime import datetime, timedelta, timezone
-from lib.common import *
+from lib.helper import *
 from urllib.parse import quote_plus
 from requests.adapters import HTTPAdapter
 try:
@@ -170,7 +170,12 @@ def get_pluto_epg_programs(channel_name, limit=48):
     programs = index.get(channel_name) or []
     now_ts = int(time.time())
     out = []
+    seen = set()
     for p in programs:
+        dedup_key = (p.get('start') or 0, (p.get('title') or '').strip().lower())
+        if dedup_key in seen:
+            continue
+        seen.add(dedup_key)
         if (p.get('end') or 0) > now_ts - 300:
             out.append(p)
         if len(out) >= limit:

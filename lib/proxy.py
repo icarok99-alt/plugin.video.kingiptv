@@ -512,7 +512,7 @@ class UnifiedProxy:
         return None, 0, None
 
     def segment_key(self, url):
-        return re.sub(r'(_=\d+|timestamp=\d+|t=\d+|seq=\d+)', '', url)
+        return url
 
     def get_cached_segment(self, url):
         key = self.segment_key(url)
@@ -770,14 +770,15 @@ class UnifiedProxy:
                 return
 
             def playlist_refresh():
-                if self.current_playlist_url:
+                if playlist_url:
                     new_playlist, new_base, new_segments = self.refresh_playlist(
-                        self.current_playlist_url, self.current_playlist_headers
+                        playlist_url, playlist_headers
                     )
                     if new_playlist:
-                        self.current_playlist_content = new_playlist
-                        self.current_playlist_base = new_base
-                        self.current_playlist_segments = new_segments
+                        nonlocal playlist_content, playlist_base, playlist_segments
+                        playlist_content = new_playlist
+                        playlist_base = new_base
+                        playlist_segments = new_segments
                     else:
                         pass
 
@@ -785,9 +786,9 @@ class UnifiedProxy:
                 url, headers, playlist_refresh_callback=playlist_refresh
             )
             if segment_data is None:
-                if self.current_playlist_segments:
+                if playlist_segments:
                     old_filename = url.split('/')[-1].split('?')[0]
-                    for seg in self.current_playlist_segments:
+                    for seg in playlist_segments:
                         if seg.endswith(old_filename):
                             new_data = self.download_complete_segment(seg, headers)
                             if new_data:
@@ -801,11 +802,11 @@ class UnifiedProxy:
             return
 
         cache = self.get_channel_cache(url)
-        self.current_playlist_url = url
-        self.current_playlist_headers = headers
-        self.current_playlist_content = None
-        self.current_playlist_base = None
-        self.current_playlist_segments = []
+        playlist_url = url
+        playlist_headers = headers
+        playlist_content = None
+        playlist_base = None
+        playlist_segments = []
 
         if not url.lower().endswith('.m3u8'):
             cached_segment = self.get_cached_segment(url)
@@ -896,17 +897,17 @@ class UnifiedProxy:
                         content = raw_content
                     try:
                         playlist_text = content.decode('utf-8', errors='ignore')
-                        self.current_playlist_content = playlist_text
-                        self.current_playlist_base = content_url.rsplit('/', 1)[0]
-                        self.current_playlist_segments = []
+                        playlist_content = playlist_text
+                        playlist_base = content_url.rsplit('/', 1)[0]
+                        playlist_segments = []
                         for line in playlist_text.split('\n'):
                             line = line.strip()
                             if line and not line.startswith('#'):
-                                absolute = urljoin(self.current_playlist_base + '/', line)
+                                absolute = urljoin(playlist_base + '/', line)
                                 if absolute.startswith(('http://', 'https://')):
-                                    self.current_playlist_segments.append(absolute)
+                                    playlist_segments.append(absolute)
                         proxy_host = "127.0.0.1:{}".format(get_active_port())
-                        rewritten = self.rewrite_m3u8_urls(playlist_text, self.current_playlist_base,
+                        rewritten = self.rewrite_m3u8_urls(playlist_text, playlist_base,
                                                             proxy_host, headers,
                                                             channel_key=self.channel_key(url))
                         response.close()
@@ -976,14 +977,14 @@ class UnifiedProxy:
                             if not is_client_alive():
                                 break
                             refreshed = False
-                            if self.current_playlist_url:
+                            if playlist_url:
                                 new_playlist, new_base, new_segments = self.refresh_playlist(
-                                    self.current_playlist_url, self.current_playlist_headers
+                                    playlist_url, playlist_headers
                                 )
                                 if new_playlist:
-                                    self.current_playlist_content = new_playlist
-                                    self.current_playlist_base = new_base
-                                    self.current_playlist_segments = new_segments
+                                    playlist_content = new_playlist
+                                    playlist_base = new_base
+                                    playlist_segments = new_segments
                                     old_filename = url.split('/')[-1].split('?')[0]
                                     for seg in new_segments:
                                         if seg.endswith(old_filename):
@@ -1038,14 +1039,14 @@ class UnifiedProxy:
                                 if response:
                                     response.close()
                                     response = None
-                                if self.current_playlist_url:
+                                if playlist_url:
                                     new_playlist, new_base, new_segments = self.refresh_playlist(
-                                        self.current_playlist_url, self.current_playlist_headers
+                                        playlist_url, playlist_headers
                                     )
                                     if new_playlist:
-                                        self.current_playlist_content = new_playlist
-                                        self.current_playlist_base = new_base
-                                        self.current_playlist_segments = new_segments
+                                        playlist_content = new_playlist
+                                        playlist_base = new_base
+                                        playlist_segments = new_segments
                                         old_filename = url.split('/')[-1].split('?')[0]
                                         for seg in new_segments:
                                             if seg.endswith(old_filename):

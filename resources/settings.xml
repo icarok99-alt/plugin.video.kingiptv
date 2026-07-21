@@ -10,9 +10,6 @@
         <setting id="skip_auto_skip" type="bool" label="Pular automaticamente (sem confirmação)" default="false"/>
         <setting id="skip_countdown_seconds" type="number" label="Contagem regressiva em segundos" default="5"/>
     </category>
-    <category label="Reprodução automática">
-        <setting id="autoplay_enabled" type="bool" label="kingIPTV reprodução automática" default="true"/>
-    </category>
     <category label="Manutenção">
         <setting label="Limpar cache de vídeos do Kodi (corrige duplicidade de itens assistidos)" type="action" action="RunScript(special://home/addons/plugin.video.kingiptv/lib/db_manager.py,clear_all)" option="close"/>
     </category>

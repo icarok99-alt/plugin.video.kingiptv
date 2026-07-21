@@ -2,6 +2,7 @@
 <window>
     <defaultcontrol>-</defaultcontrol>
     <allowoverlay>no</allowoverlay>
+    <animation effect="fade" start="0" end="100" time="200">WindowOpen</animation>
 
     <controls>
 

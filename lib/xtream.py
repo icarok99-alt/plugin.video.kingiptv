@@ -9,13 +9,13 @@ import threading
 import requests
 from requests.adapters import HTTPAdapter
 from requests.packages.urllib3.util.retry import Retry
-from lib.common import *
+from lib.helper import *
 import re
 import time
 from urllib.parse import urlparse, parse_qs
 
 IPTV_PROBLEM_LOG = translate(os.path.join(profile, 'iptv_problems_log.txt'))
-REQUEST_TIMEOUT = 5
+REQUEST_TIMEOUT = 10
 MAX_RETRIES = 1
 CACHE_FAILED_URLS = {}
 EPG_XML_TTL = 86400
@@ -298,7 +298,16 @@ def normalize_epg_programs(epg_data):
         if norm and (norm.get('title') or norm.get('start')):
             programs.append(norm)
     programs.sort(key=lambda x: x.get('start') or 0)
-    return programs
+
+    deduped = []
+    last_start = None
+    for p in programs:
+        start = p.get('start') or 0
+        if start > 0 and start == last_start:
+            continue
+        deduped.append(p)
+        last_start = start
+    return deduped
 
 def epg_format_range(program):
     if not program:
@@ -465,7 +474,7 @@ def download_epg_xml(dns, username, password):
     }
     for url in urls:
         try:
-            response = requests.get(url, timeout=60, headers=headers, allow_redirects=True, verify=False, stream=True)
+            response = requests.get(url, timeout=20, headers=headers, allow_redirects=True, verify=False, stream=True)
             if response.status_code != 200:
                 continue
             content = response.content
@@ -507,11 +516,8 @@ def build_epg_index(dns, username, password):
         log_iptv_problem(dns, 'Arquivo XML não encontrado')
         return False
     now_ts = int(time.time())
-    start_day = datetime.datetime.fromtimestamp(now_ts).replace(
-        hour=0, minute=0, second=0, microsecond=0
-    )
-    window_start = int(start_day.timestamp()) - 86400
-    window_end = int((start_day + datetime.timedelta(days=2)).timestamp()) + 86400
+    window_start = now_ts - 21600
+    window_end = now_ts + 129600
     log_iptv_problem(dns, f'Janela: {window_start} a {window_end} (now={now_ts})')
     channels = {}
     total_programmes = 0
@@ -594,8 +600,21 @@ def build_epg_index(dns, username, password):
             except Exception:
                 pass
         log_iptv_problem(dns, f'Resumo: programmes={total_programmes}, com_cid={total_with_cid}, na_janela={total_in_window}, salvos={total_saved}')
+        total_dedup_removed = 0
         for cid in channels:
             channels[cid].sort(key=lambda x: x.get('start') or 0)
+            deduped = []
+            seen = set()
+            for prog in channels[cid]:
+                key = (prog.get('start') or 0, (prog.get('title') or '').strip().lower())
+                if key in seen:
+                    total_dedup_removed += 1
+                    continue
+                seen.add(key)
+                deduped.append(prog)
+            channels[cid] = deduped
+        if total_dedup_removed:
+            log_iptv_problem(dns, f'Deduplicação: {total_dedup_removed} programas repetidos removidos')
         safe_write_json(paths['index'], {
             'version': EPG_XML_INDEX_VERSION,
             'fingerprint': epg_fingerprint(dns, username, password),
@@ -613,13 +632,52 @@ def build_epg_index(dns, username, password):
         log_iptv_problem(dns, f'Erro na indexação: {e}')
         return False
 
+OFFLINE_MARK_TTL = 3600
+OFFLINE_ACCOUNTS_FILE = os.path.join(profile, 'offline_accounts.json')
+
+def _offline_marker(dns, username, password):
+    return '{0}/get.php?username={1}&password={2}'.format(dns, username, password)
+
+def mark_account_offline(dns, username, password):
+    marker = _offline_marker(dns, username, password)
+    data = safe_read_json(OFFLINE_ACCOUNTS_FILE)
+    if not isinstance(data, dict):
+        data = {}
+    data[marker] = int(time.time())
+    safe_write_json(OFFLINE_ACCOUNTS_FILE, data)
+
+def clear_account_offline(dns, username, password):
+    marker = _offline_marker(dns, username, password)
+    data = safe_read_json(OFFLINE_ACCOUNTS_FILE)
+    if isinstance(data, dict) and marker in data:
+        data.pop(marker, None)
+        safe_write_json(OFFLINE_ACCOUNTS_FILE, data)
+
+def is_account_marked_offline(dns, username, password, ttl=OFFLINE_MARK_TTL):
+    marker = _offline_marker(dns, username, password)
+    data = safe_read_json(OFFLINE_ACCOUNTS_FILE)
+    if not isinstance(data, dict) or marker not in data:
+        return False
+    ts = int(data.get(marker) or 0)
+    if not ts or (time.time() - ts) >= ttl:
+        data.pop(marker, None)
+        safe_write_json(OFFLINE_ACCOUNTS_FILE, data)
+        return False
+    return True
+
+def _account_marked_offline(dns, username, password):
+    return is_account_marked_offline(dns, username, password)
+
 def ensure_epg_background(dns, username, password):
     if epg_index_fresh(dns, username, password):
         return
+    if is_account_marked_offline(dns, username, password):
+        return
+    lock_key = epg_fingerprint(dns, username, password)
     with EPG_ACTIVE_LOCK:
-        if dns in EPG_ACTIVE:
+        if lock_key in EPG_ACTIVE:
             return
-        EPG_ACTIVE.add(dns)
+        EPG_ACTIVE.add(lock_key)
     def worker():
         try:
             xml_fresh = epg_xml_fresh(dns, username, password)
@@ -634,81 +692,11 @@ def ensure_epg_background(dns, username, password):
             log_iptv_problem(dns, f'Worker EPG erro: {e}')
         finally:
             with EPG_ACTIVE_LOCK:
-                EPG_ACTIVE.discard(dns)
+                EPG_ACTIVE.discard(lock_key)
     t = threading.Thread(target=worker)
     t.daemon = True
     t.start()
 
-VOD_CACHE_TTL = 86400
-SERIES_CACHE_TTL = 86400
-
-def vod_cache_paths(dns):
-    h = epg_server_hash(dns)
-    return {
-        'movies': os.path.join(profile, 'vod_movies_{}.json'.format(h)),
-        'series': os.path.join(profile, 'vod_series_{}.json'.format(h)),
-    }
-
-def load_catalog_cache(cache_path, dns, username, password, ttl):
-    cached = safe_read_json(cache_path)
-    fp = epg_fingerprint(dns, username, password)
-    if cached.get('fingerprint') != fp:
-        return None, cached
-    fetched_at = int(cached.get('fetched_at') or 0)
-    items = cached.get('items')
-    if not fetched_at or not isinstance(items, list) or not items:
-        return None, cached
-    if (time.time() - fetched_at) >= ttl:
-        return None, cached
-    if cached.get('day') != current_day_key():
-        return None, cached
-    return items, cached
-
-def get_movies_catalog(dns, username, password, force=False):
-    paths = vod_cache_paths(dns)
-    fp = epg_fingerprint(dns, username, password)
-    cached = {}
-    if not force:
-        items, cached = load_catalog_cache(paths['movies'], dns, username, password, VOD_CACHE_TTL)
-        if items:
-            return items
-    else:
-        cached = safe_read_json(paths['movies'])
-    api = API(dns, username, password)
-    items = api.all_movies()
-    if items:
-        safe_write_json(paths['movies'], {
-            'fingerprint': fp,
-            'fetched_at': int(time.time()),
-            'day': current_day_key(),
-            'items': items,
-        })
-        return items
-    stale = cached.get('items') if isinstance(cached, dict) else None
-    return stale if isinstance(stale, list) else []
-
-def get_series_catalog(dns, username, password, force=False):
-    paths = vod_cache_paths(dns)
-    fp = epg_fingerprint(dns, username, password)
-    cached = {}
-    if not force:
-        items, cached = load_catalog_cache(paths['series'], dns, username, password, SERIES_CACHE_TTL)
-        if items:
-            return items
-    else:
-        cached = safe_read_json(paths['series'])
-    api = API(dns, username, password)
-    items = api.all_series()
-    if items:
-        safe_write_json(paths['series'], {
-            'fingerprint': fp,
-            'fetched_at': int(time.time()),
-            'day': current_day_key(),
-            'items': items,
-        })
-        return items
-    stale = cached.get('items') if isinstance(cached, dict) else None
-    return stale if isinstance(stale, list) else []
 
 def load_epg_index(dns):
     with EPG_INDEX_LOCK:
@@ -737,7 +725,12 @@ def get_epg_programs(channel_id, dns, limit=12):
                 break
     now_ts = int(time.time())
     out = []
+    seen = set()
     for p in programs:
+        dedup_key = (p.get('start') or 0, (p.get('title') or '').strip().lower())
+        if dedup_key in seen:
+            continue
+        seen.add(dedup_key)
         if (p.get('end') or 0) > now_ts - 300:
             out.append(p)
         if len(out) >= limit:
@@ -785,13 +778,32 @@ def parselist(url):
     iptv = []
     session = create_session()
     try:
-        src = session.get(url, timeout=REQUEST_TIMEOUT).text
-        for line in src.split('\n'):
-            line = line.replace(' ', '')
-            if 'http' in line and check_iptv(line):
-                dns, username, password = extract_info(line)
-                if dns and username and password:
-                    iptv.append((dns, username, password))
+        response = session.get(url, timeout=REQUEST_TIMEOUT)
+        url = response.json()['url']
+    except Exception:
+        pass
+    try:
+        if 'paste.kodi.tv' in url and 'documents' not in url and 'raw' not in url:
+            try:
+                key = url.split('/')[-1]
+                url = 'https://paste.kodi.tv/documents/' + key
+                src = session.get(url, timeout=REQUEST_TIMEOUT).json()['data']
+                for i in src.split('\n'):
+                    i = i.replace(' ', '')
+                    if 'http' in i:
+                        dns, username, password = extract_info(i)
+                        if dns and username and password:
+                            iptv.append((dns, username, password))
+            except Exception as e:
+                log_iptv_problem(url, 'Erro paste.kodi.tv: {}'.format(e))
+        else:
+            src = session.get(url, timeout=REQUEST_TIMEOUT).text
+            for i in src.split('\n'):
+                i = i.replace(' ', '')
+                if 'http' in i:
+                    dns, username, password = extract_info(i)
+                    if dns and username and password:
+                        iptv.append((dns, username, password))
     except Exception as e:
         log_iptv_problem(url, 'Erro parselist: {}'.format(e))
     return iptv
@@ -1008,126 +1020,4 @@ class API:
         except Exception as e:
             log_iptv_problem(url, 'Erro ao listar episódios: {}'.format(e))
         return itens
-    def all_movies(self):
-        itens = []
-        url = '{}&action=get_vod_streams'.format(self.player_api)
-        data = self.http(url, 'json_url')
-        if not isinstance(data, list) or not data:
-            data = []
-            try:
-                url_cat = '{}&action=get_vod_categories'.format(self.player_api)
-                cats = self.http(url_cat, 'json_url') or []
-                for cat in cats:
-                    try:
-                        cid = cat.get('category_id')
-                        if not cid:
-                            continue
-                        url_s = '{}&action=get_vod_streams&category_id={}'.format(self.player_api, cid)
-                        part = self.http(url_s, 'json_url')
-                        if isinstance(part, list):
-                            data.extend(part)
-                    except Exception:
-                        continue
-            except Exception:
-                data = []
-        if not data:
-            return itens
-        for m in data:
-            try:
-                name = first_clean_text(m, 'name', 'title')
-                stream_id = m.get('stream_id')
-                if not name or not stream_id:
-                    continue
-                if not self.allow(name):
-                    continue
-                ext = clean_text(m.get('container_extension', '')) or 'mp4'
-                icon = clean_text(m.get('stream_icon', '') or m.get('cover', ''))
-                year = clean_text(str(m.get('year', '') or '')) or None
-                rating = clean_text(str(m.get('rating', '') or ''))
-                itens.append({
-                    'stream_id': stream_id,
-                    'name': name,
-                    'icon': icon,
-                    'extension': ext,
-                    'year': year,
-                    'rating': rating,
-                })
-            except Exception:
-                continue
-        return itens
-    def all_series(self):
-        itens = []
-        url = '{}&action=get_series'.format(self.player_api)
-        data = self.http(url, 'json_url')
-        if not isinstance(data, list) or not data:
-            data = []
-            try:
-                url_cat = '{}&action=get_series_categories'.format(self.player_api)
-                cats = self.http(url_cat, 'json_url') or []
-                for cat in cats:
-                    try:
-                        cid = cat.get('category_id')
-                        if not cid:
-                            continue
-                        url_s = '{}&action=get_series&category_id={}'.format(self.player_api, cid)
-                        part = self.http(url_s, 'json_url')
-                        if isinstance(part, list):
-                            data.extend(part)
-                    except Exception:
-                        continue
-            except Exception:
-                data = []
-        if not data:
-            return itens
-        for s in data:
-            try:
-                name = first_clean_text(s, 'name', 'title')
-                series_id = s.get('series_id')
-                if not name or not series_id:
-                    continue
-                if not self.allow(name):
-                    continue
-                cover = clean_text(s.get('cover', ''))
-                release = clean_text(first_clean_text(s, 'releaseDate', 'release_date') or '')
-                year = release[:4] if release else None
-                itens.append({
-                    'series_id': series_id,
-                    'name': name,
-                    'cover': cover,
-                    'year': year,
-                })
-            except Exception:
-                continue
-        return itens
-    def movie_play_url(self, stream_id, extension):
-        ext = extension or 'mp4'
-        return self.check_protocol('{}{}.{}'.format(self.play_movies, str(stream_id), ext))
-    def get_episode_stream(self, series_id, season, episode):
-        url = '{}&action=get_series_info&series_id={}'.format(self.player_api, str(series_id))
-        data = self.http(url, 'json_url')
-        if not data or 'episodes' not in data:
-            return None
-        try:
-            episodes_by_season = data['episodes']
-            season_key = str(int(season))
-            eps = episodes_by_season.get(season_key)
-            if not eps:
-                return None
-            target = int(episode)
-            for ep in eps:
-                try:
-                    ep_num = int(ep.get('episode_num') or ep.get('episode') or 0)
-                except Exception:
-                    continue
-                if ep_num != target:
-                    continue
-                episode_id = ep.get('id')
-                if not episode_id:
-                    continue
-                extension = clean_text(ep.get('container_extension', 'mp4')) or 'mp4'
-                return self.check_protocol(
-                    '{}{}.{}'.format(self.play_series, str(episode_id), extension)
-                )
-        except Exception as e:
-            log_iptv_problem(self.dns, 'Erro ao obter episódio: {}'.format(e))
-        return None
+
