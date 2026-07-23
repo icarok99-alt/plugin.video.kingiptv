@@ -937,16 +937,17 @@ class UnifiedProxy:
                     playlist_segments = new_segments
 
             segment_data = None
-            for attempt in range(6):
-                if attempt > 0:
-                    playlist_refresh()
-                    time.sleep(RETRY_DELAY * (attempt + 1))
+            for attempt in range(3):
                 segment_data = self.download_complete_segment(
                     url, headers,
                     playlist_refresh_callback=playlist_refresh if attempt == 0 else None
                 )
                 if segment_data is not None:
                     break
+                if attempt == 0:
+                    playlist_refresh()
+                    time.sleep(RETRY_DELAY)
+                    continue
                 if playlist_segments:
                     old_filename = url.split('/')[-1].split('?')[0]
                     found_seg = None
