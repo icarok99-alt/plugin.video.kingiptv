@@ -7,9 +7,9 @@ import random
 import time
 import os
 import re
-from urllib.parse import urlparse, unquote, urljoin, quote
+from urllib.parse import urlparse, unquote, urljoin, quote, parse_qs
 from urllib.request import Request, urlopen
-from urllib.error import URLError, HTTPError
+from urllib.error import HTTPError
 import ssl
 from collections import deque
 import gzip
@@ -113,7 +113,7 @@ MAX_CONCURRENT_HANDLERS = 40
 CHANNEL_IDLE_ABORT_SECONDS = 15
 PLAYLIST_REFRESH_INTERVAL = 600
 
-TOKEN_ERROR_CODES = {403, 404, 410, 451, 503}
+TOKEN_ERROR_CODES = {401, 403, 404, 410, 451, 500, 502, 503}
 
 CHROME_UA = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -153,54 +153,129 @@ def get_origin(url):
 class SimpleDNS:
     def __init__(self):
         self.cache = {}
-        self.dns_servers = ["1.1.1.1", "8.8.8.8", "208.67.222.222"]
+        self.cache_lock = threading.Lock()
+        self.dns_servers = [
+            ("1.1.1.1", 53),
+            ("8.8.8.8", 53),
+            ("208.67.222.222", 53),
+            ("9.9.9.9", 53),
+        ]
         self.original_getaddrinfo = socket.getaddrinfo
         socket.getaddrinfo = self.resolver
+        self.timeout = 5.0
+        self.max_retries = 2
 
-    def build_query(self, domain):
+    def build_query(self, domain, qtype=1):
         transaction_id = random.randint(0, 65535)
         header = struct.pack(">HHHHHH", transaction_id, 0x0100, 1, 0, 0, 0)
         qname = b"".join(
             bytes([len(part)]) + part.encode() for part in domain.split(".")
         ) + b"\x00"
-        return header + qname + struct.pack(">HH", 1, 1)
+        return header + qname + struct.pack(">HH", qtype, 1)
 
     def parse_response(self, data):
         try:
+            flags = struct.unpack(">H", data[2:4])[0]
+            if (flags & 0x000F) != 0:
+                return None, None
             answer_count = struct.unpack(">H", data[6:8])[0]
+            if answer_count == 0:
+                return None, None
             offset = 12
             while data[offset] != 0:
                 offset += 1
             offset += 5
+            ips = []
+            ttl = 3600
             for _ in range(answer_count):
-                offset += 2
-                rtype, _, _, rdlength = struct.unpack(">HHIH", data[offset:offset + 10])
+                if data[offset] & 0xC0:
+                    offset += 2
+                else:
+                    while data[offset] != 0:
+                        offset += 1
+                    offset += 1
+                rtype, rclass, ttl, rdlength = struct.unpack(">HHIH", data[offset:offset+10])
                 offset += 10
                 if rtype == 1 and rdlength == 4:
-                    ip = struct.unpack(">BBBB", data[offset:offset + 4])
-                    return ".".join(map(str, ip))
+                    ip = struct.unpack(">BBBB", data[offset:offset+4])
+                    ips.append(".".join(map(str, ip)))
+                elif rtype == 28 and rdlength == 16:
+                    ip = struct.unpack(">16B", data[offset:offset+16])
+                    ips.append(":".join("{:02x}{:02x}".format(ip[i], ip[i+1]) for i in range(0, 16, 2)))
                 offset += rdlength
+            if ips:
+                return ips, ttl
         except Exception:
             pass
-        return None
+        return None, None
 
-    def resolve(self, domain):
-        if domain in self.cache and self.cache[domain]["expires"] > time.time():
-            return self.cache[domain]["ip"]
-        for dns in self.dns_servers:
+    def resolve_udp(self, domain):
+        for server, port in self.dns_servers:
+            for attempt in range(self.max_retries):
+                try:
+                    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                    sock.settimeout(self.timeout)
+                    query = self.build_query(domain)
+                    sock.sendto(query, (server, port))
+                    data, _ = sock.recvfrom(2048)
+                    sock.close()
+                    ips, ttl = self.parse_response(data)
+                    if ips:
+                        return ips, ttl
+                except Exception:
+                    continue
+        return None, None
+
+    def resolve_tcp(self, domain):
+        for server, port in self.dns_servers:
             try:
-                sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-                sock.settimeout(2)
+                sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                sock.settimeout(self.timeout + 1)
+                sock.connect((server, port))
                 query = self.build_query(domain)
-                sock.sendto(query, (dns, 53))
-                data, _ = sock.recvfrom(512)
+                sock.send(struct.pack(">H", len(query)) + query)
+                resp_len_data = sock.recv(2)
+                if len(resp_len_data) != 2:
+                    sock.close()
+                    continue
+                resp_len = struct.unpack(">H", resp_len_data)[0]
+                data = b""
+                while len(data) < resp_len:
+                    chunk = sock.recv(min(4096, resp_len - len(data)))
+                    if not chunk:
+                        break
+                    data += chunk
                 sock.close()
-                ip = self.parse_response(data)
-                if ip:
-                    self.cache[domain] = {"ip": ip, "expires": time.time() + 3600}
-                    return ip
+                if len(data) == resp_len:
+                    ips, ttl = self.parse_response(data)
+                    if ips:
+                        return ips, ttl
             except Exception:
                 continue
+        return None, None
+
+    def resolve(self, domain):
+        if not domain or domain == '':
+            return None
+        with self.cache_lock:
+            if domain in self.cache:
+                entry = self.cache[domain]
+                if entry["expires"] > time.time():
+                    return entry["ips"]
+                else:
+                    del self.cache[domain]
+
+        ips, ttl = self.resolve_udp(domain)
+        if not ips:
+            ips, ttl = self.resolve_tcp(domain)
+
+        if ips:
+            with self.cache_lock:
+                self.cache[domain] = {
+                    "ips": ips,
+                    "expires": time.time() + (ttl if ttl else 3600)
+                }
+            return ips
         return None
 
     def resolver(self, host, port, *args, **kwargs):
@@ -208,9 +283,21 @@ class SimpleDNS:
             socket.inet_aton(host)
             return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", (host, port))]
         except Exception:
-            ip = self.resolve(host)
-            if ip:
-                return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", (ip, port))]
+            ips = self.resolve(host)
+            if ips:
+                results = []
+                for ip in ips:
+                    try:
+                        socket.inet_aton(ip)
+                        results.append((socket.AF_INET, socket.SOCK_STREAM, 6, "", (ip, port)))
+                    except Exception:
+                        try:
+                            socket.inet_pton(socket.AF_INET6, ip)
+                            results.append((socket.AF_INET6, socket.SOCK_STREAM, 6, "", (ip, port)))
+                        except Exception:
+                            continue
+                if results:
+                    return results
         return self.original_getaddrinfo(host, port, *args, **kwargs)
 
 dns = SimpleDNS()
@@ -415,23 +502,32 @@ class UnifiedProxy:
         return ip
 
     def extract_url_from_path(self, path):
+        result = {'url': None, 'playlist_url': None}
         if '/?url=' in path:
-            url_part = path.split('/?url=', 1)[1]
-            if '&' in url_part:
-                url_part = url_part.split('&', 1)[0]
-            if ' ' in url_part:
-                url_part = url_part.split(' ', 1)[0]
-            return unquote(url_part)
+            query_part = path.split('/?', 1)[1]
+            params = parse_qs(query_part)
+            url_list = params.get('url', [])
+            if url_list:
+                result['url'] = unquote(url_list[0])
+            playlist_list = params.get('playlist_url', [])
+            if playlist_list:
+                result['playlist_url'] = unquote(playlist_list[0])
+            return result
         if '/tsdownloader' in path and '?url=' in path:
             params = path.split('?', 1)[1]
             for param in params.split('&'):
                 if param.startswith('url='):
-                    return unquote(param[4:])
+                    result['url'] = unquote(param[4:])
+                elif param.startswith('playlist_url='):
+                    result['playlist_url'] = unquote(param[13:])
+            return result
         if path.startswith('/http://') or path.startswith('/https://'):
-            return unquote(path[1:])
+            result['url'] = unquote(path[1:])
+            return result
         if path.startswith('http://') or path.startswith('https://'):
-            return unquote(path)
-        return None
+            result['url'] = unquote(path)
+            return result
+        return result
 
     def channel_key(self, url):
         return re.sub(r'(_=\d+|timestamp=\d+|t=\d+|seq=\d+)', '', url)
@@ -524,14 +620,13 @@ class UnifiedProxy:
             if time.time() - ts > SEGMENT_CACHE_TTL:
                 del self.segment_cache[key]
                 return None
-            if len(data) > 0 and data[0] == 0x47:
+            if len(data) >= 188 and data[0] == 0x47:
                 return data
+            del self.segment_cache[key]
             return None
 
     def store_segment(self, url, data):
-        if not data:
-            return
-        if data[0] != 0x47:
+        if not data or len(data) < 188 or data[0] != 0x47:
             return
         key = self.segment_key(url)
         with self.segment_cache_lock:
@@ -546,13 +641,35 @@ class UnifiedProxy:
             url, headers, max_retries=MAX_RETRIES, timeout=timeout
         )
         if response and status in (200, 206):
-            data = response.read()
+            content_length = response.headers.get('content-length')
+            expected_size = None
+            if content_length:
+                try:
+                    expected_size = int(content_length)
+                except Exception:
+                    pass
+            data = b""
+            while True:
+                chunk = response.read(BUFFER_SIZE)
+                if not chunk:
+                    break
+                data += chunk
+                if expected_size and len(data) >= expected_size:
+                    break
             response.close()
+            if expected_size is not None and len(data) != expected_size:
+                return None
             if content_encoding == 'gzip':
-                data = gzip.decompress(data)
+                try:
+                    data = gzip.decompress(data)
+                except Exception:
+                    return None
             elif content_encoding == 'deflate':
-                data = zlib.decompress(data)
-            if len(data) > 0 and data[0] == 0x47:
+                try:
+                    data = zlib.decompress(data)
+                except Exception:
+                    return None
+            if len(data) >= 188 and data[0] == 0x47:
                 return data
             return None
         if status in TOKEN_ERROR_CODES and playlist_refresh_callback:
@@ -566,14 +683,30 @@ class UnifiedProxy:
                 url, headers, max_retries=PREFETCH_MAX_RETRIES, timeout=PREFETCH_TIMEOUT
             )
             if response and status_code in [200, 206]:
-                data = response.read()
+                content_length = response.headers.get('content-length')
+                expected_size = None
+                if content_length:
+                    try:
+                        expected_size = int(content_length)
+                    except Exception:
+                        pass
+                data = b""
+                while True:
+                    chunk = response.read(BUFFER_SIZE)
+                    if not chunk:
+                        break
+                    data += chunk
+                    if expected_size and len(data) >= expected_size:
+                        break
+                if expected_size is not None and len(data) != expected_size:
+                    return
                 try:
                     if content_encoding == 'gzip':
                         data = gzip.decompress(data)
                     elif content_encoding == 'deflate':
                         data = zlib.decompress(data)
                 except Exception:
-                    pass
+                    return
                 self.store_segment(url, data)
         except Exception:
             pass
@@ -679,8 +812,9 @@ class UnifiedProxy:
                 pass
         return None, None, None
 
-    def rewrite_m3u8_urls(self, playlist_content, base_url, proxy_host, headers=None, prefetch=True, channel_key=None):
+    def rewrite_m3u8_urls(self, playlist_content, base_url, proxy_host, headers=None, prefetch=True, channel_key=None, playlist_original_url=None):
         segment_urls = []
+        playlist_original_url_encoded = quote(playlist_original_url, safe='') if playlist_original_url else ''
         def to_proxy_url(raw_url):
             raw_url = raw_url.strip()
             if not raw_url:
@@ -690,7 +824,10 @@ class UnifiedProxy:
                 if absolute.startswith('http://127.0.0.1') or absolute.startswith('http://localhost'):
                     return absolute
                 if absolute.startswith(('http://', 'https://')):
-                    return absolute, "http://{}/?url={}".format(proxy_host, quote(absolute, safe=''))
+                    full_proxy_url = "http://{}/?url={}".format(proxy_host, quote(absolute, safe=''))
+                    if playlist_original_url_encoded:
+                        full_proxy_url += "&playlist_url={}".format(playlist_original_url_encoded)
+                    return absolute, full_proxy_url
             except Exception:
                 pass
             return None
@@ -748,7 +885,7 @@ class UnifiedProxy:
         except Exception:
             pass
 
-    def handle_channel_stream(self, url, headers, wfile, client_sock=None, method='GET'):
+    def handle_channel_stream(self, url, headers, wfile, client_sock=None, method='GET', playlist_original_url=None):
         if method in ('HEAD', 'OPTIONS'):
             content_type = 'application/vnd.apple.mpegurl' if '.m3u8' in url.lower() else 'video/mp2t'
             try:
@@ -762,6 +899,12 @@ class UnifiedProxy:
                 pass
             return
 
+        playlist_url = playlist_original_url if playlist_original_url else url
+        playlist_headers = headers
+        playlist_content = None
+        playlist_base = None
+        playlist_segments = []
+
         is_ts_segment = '.ts' in url.lower() or '/segment/' in url.lower()
         if is_ts_segment:
             cached = self.get_cached_segment(url)
@@ -770,43 +913,67 @@ class UnifiedProxy:
                 return
 
             def playlist_refresh():
-                if playlist_url:
-                    new_playlist, new_base, new_segments = self.refresh_playlist(
-                        playlist_url, playlist_headers
-                    )
-                    if new_playlist:
-                        nonlocal playlist_content, playlist_base, playlist_segments
-                        playlist_content = new_playlist
-                        playlist_base = new_base
-                        playlist_segments = new_segments
-                    else:
-                        pass
+                nonlocal playlist_content, playlist_base, playlist_segments
+                new_playlist, new_base, new_segments = self.refresh_playlist(
+                    playlist_url, playlist_headers
+                )
+                if new_playlist:
+                    playlist_content = new_playlist
+                    playlist_base = new_base
+                    playlist_segments = new_segments
 
-            segment_data = self.download_complete_segment(
-                url, headers, playlist_refresh_callback=playlist_refresh
-            )
-            if segment_data is None:
+            segment_data = None
+            for attempt in range(4):
+                if attempt > 0:
+                    playlist_refresh()
+                    time.sleep(RETRY_DELAY * attempt)
+                segment_data = self.download_complete_segment(
+                    url, headers,
+                    playlist_refresh_callback=playlist_refresh if attempt == 0 else None
+                )
+                if segment_data is not None:
+                    break
                 if playlist_segments:
                     old_filename = url.split('/')[-1].split('?')[0]
+                    found_seg = None
                     for seg in playlist_segments:
-                        if seg.endswith(old_filename):
-                            new_data = self.download_complete_segment(seg, headers)
-                            if new_data:
-                                self.store_segment(seg, new_data)
-                                self._send_segment(wfile, new_data)
-                                return
-                self._send_error(wfile, 503, "Segmento indisponivel")
-                return
+                        seg_filename = seg.split('/')[-1].split('?')[0]
+                        if seg_filename == old_filename:
+                            found_seg = seg
+                            break
+                    if not found_seg and playlist_segments:
+                        found_seg = playlist_segments[0]
+                    if found_seg:
+                        segment_data = self.download_complete_segment(
+                            found_seg, headers,
+                            playlist_refresh_callback=None
+                        )
+                        if segment_data is not None:
+                            url = found_seg
+                            break
+                if not segment_data and playlist_segments:
+                    for seg in playlist_segments[:2]:
+                        seg_data = self.download_complete_segment(seg, headers)
+                        if seg_data is not None:
+                            segment_data = seg_data
+                            url = seg
+                            break
+
+            if segment_data is None:
+                if playlist_segments:
+                    seg = playlist_segments[0]
+                    segment_data = self.download_complete_segment(seg, headers)
+                    if segment_data:
+                        url = seg
+                if segment_data is None:
+                    self._send_error(wfile, 503, "Segmento indisponivel")
+                    return
+
             self.store_segment(url, segment_data)
             self._send_segment(wfile, segment_data)
             return
 
         cache = self.get_channel_cache(url)
-        playlist_url = url
-        playlist_headers = headers
-        playlist_content = None
-        playlist_base = None
-        playlist_segments = []
 
         if not url.lower().endswith('.m3u8'):
             cached_segment = self.get_cached_segment(url)
@@ -909,7 +1076,8 @@ class UnifiedProxy:
                         proxy_host = "127.0.0.1:{}".format(get_active_port())
                         rewritten = self.rewrite_m3u8_urls(playlist_text, playlist_base,
                                                             proxy_host, headers,
-                                                            channel_key=self.channel_key(url))
+                                                            channel_key=self.channel_key(url),
+                                                            playlist_original_url=content_url)
                         response.close()
                         safe_write(b"HTTP/1.1 200 OK\r\n"
                                    b"Content-Type: application/vnd.apple.mpegurl\r\n" +
@@ -1346,7 +1514,9 @@ class ProxyHandler(socketserver.StreamRequestHandler):
 
     def process_request(self):
         try:
-            url = self.proxy.extract_url_from_path(self.path)
+            parsed = self.proxy.extract_url_from_path(self.path)
+            url = parsed.get('url')
+            playlist_original_url = parsed.get('playlist_url')
             if not url:
                 html = """<html><body>
 <h2>XC Pro Proxy Active</h2>
@@ -1364,7 +1534,7 @@ class ProxyHandler(socketserver.StreamRequestHandler):
             if self.proxy.detect_mp4(url):
                 self.proxy.handle_mp4_stream(url, self.command, headers, self.wfile)
             else:
-                self.proxy.handle_channel_stream(url, headers, self.wfile, getattr(self, 'connection', None), method=self.command)
+                self.proxy.handle_channel_stream(url, headers, self.wfile, getattr(self, 'connection', None), method=self.command, playlist_original_url=playlist_original_url)
         except Exception:
             try:
                 self.send_error(500, "Internal Server Error")
