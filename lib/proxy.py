@@ -423,6 +423,7 @@ class UnifiedProxy:
         self.playlist_last_refresh = {}
         self.channel_ua_cache = {}
         self.channel_ua_lock = threading.Lock()
+        self.original_playlist_urls = {}
         self.current_playlist_segments = []
         self.current_playlist_base = None
 
@@ -781,7 +782,7 @@ class UnifiedProxy:
                     continue
             self.download_segment_to_cache(seg_url, headers)
 
-    def fetch_playlist(self, url, headers):
+    def fetch_playlist(self, url, headers, fallback_url=None):
         try:
             response, status, _ = self.fetch_channel_with_fallback(
                 url, headers, max_retries=2, timeout=10
@@ -790,12 +791,20 @@ class UnifiedProxy:
                 content = response.read()
                 response.close()
                 return content
+            if fallback_url:
+                response, status, _ = self.fetch_channel_with_fallback(
+                    fallback_url, headers, max_retries=2, timeout=10
+                )
+                if response and status in (200, 206):
+                    content = response.read()
+                    response.close()
+                    return content
         except Exception:
             pass
         return None
 
-    def refresh_playlist(self, playlist_url, headers):
-        content = self.fetch_playlist(playlist_url, headers)
+    def refresh_playlist(self, playlist_url, headers, fallback_url=None):
+        content = self.fetch_playlist(playlist_url, headers, fallback_url)
         if content:
             try:
                 playlist_text = content.decode('utf-8', errors='ignore')
@@ -905,6 +914,10 @@ class UnifiedProxy:
         playlist_base = None
         playlist_segments = []
 
+        channel_key = self.channel_key(url)
+        if not url.lower().endswith('.ts') and not playlist_original_url:
+            self.original_playlist_urls[channel_key] = url
+
         is_ts_segment = '.ts' in url.lower() or '/segment/' in url.lower()
         if is_ts_segment:
             cached = self.get_cached_segment(url)
@@ -915,7 +928,8 @@ class UnifiedProxy:
             def playlist_refresh():
                 nonlocal playlist_content, playlist_base, playlist_segments
                 new_playlist, new_base, new_segments = self.refresh_playlist(
-                    playlist_url, playlist_headers
+                    playlist_url, playlist_headers,
+                    fallback_url=self.original_playlist_urls.get(channel_key)
                 )
                 if new_playlist:
                     playlist_content = new_playlist
@@ -923,10 +937,10 @@ class UnifiedProxy:
                     playlist_segments = new_segments
 
             segment_data = None
-            for attempt in range(4):
+            for attempt in range(6):
                 if attempt > 0:
                     playlist_refresh()
-                    time.sleep(RETRY_DELAY * attempt)
+                    time.sleep(RETRY_DELAY * (attempt + 1))
                 segment_data = self.download_complete_segment(
                     url, headers,
                     playlist_refresh_callback=playlist_refresh if attempt == 0 else None
@@ -1076,7 +1090,7 @@ class UnifiedProxy:
                         proxy_host = "127.0.0.1:{}".format(get_active_port())
                         rewritten = self.rewrite_m3u8_urls(playlist_text, playlist_base,
                                                             proxy_host, headers,
-                                                            channel_key=self.channel_key(url),
+                                                            channel_key=channel_key,
                                                             playlist_original_url=content_url)
                         response.close()
                         safe_write(b"HTTP/1.1 200 OK\r\n"
@@ -1147,7 +1161,8 @@ class UnifiedProxy:
                             refreshed = False
                             if playlist_url:
                                 new_playlist, new_base, new_segments = self.refresh_playlist(
-                                    playlist_url, playlist_headers
+                                    playlist_url, playlist_headers,
+                                    fallback_url=self.original_playlist_urls.get(channel_key)
                                 )
                                 if new_playlist:
                                     playlist_content = new_playlist
@@ -1209,7 +1224,8 @@ class UnifiedProxy:
                                     response = None
                                 if playlist_url:
                                     new_playlist, new_base, new_segments = self.refresh_playlist(
-                                        playlist_url, playlist_headers
+                                        playlist_url, playlist_headers,
+                                        fallback_url=self.original_playlist_urls.get(channel_key)
                                     )
                                     if new_playlist:
                                         playlist_content = new_playlist
