@@ -918,6 +918,8 @@ class UnifiedProxy:
         if not url.lower().endswith('.ts') and not playlist_original_url:
             self.original_playlist_urls[channel_key] = url
 
+        refresh_url = self.original_playlist_urls.get(channel_key, playlist_url)
+
         is_ts_segment = '.ts' in url.lower() or '/segment/' in url.lower()
         if is_ts_segment:
             cached = self.get_cached_segment(url)
@@ -928,7 +930,7 @@ class UnifiedProxy:
             def playlist_refresh():
                 nonlocal playlist_content, playlist_base, playlist_segments
                 new_playlist, new_base, new_segments = self.refresh_playlist(
-                    playlist_url, playlist_headers,
+                    refresh_url, playlist_headers,
                     fallback_url=self.original_playlist_urls.get(channel_key)
                 )
                 if new_playlist:
@@ -1160,9 +1162,9 @@ class UnifiedProxy:
                             if not is_client_alive():
                                 break
                             refreshed = False
-                            if playlist_url:
+                            if refresh_url:
                                 new_playlist, new_base, new_segments = self.refresh_playlist(
-                                    playlist_url, playlist_headers,
+                                    refresh_url, playlist_headers,
                                     fallback_url=self.original_playlist_urls.get(channel_key)
                                 )
                                 if new_playlist:
@@ -1223,9 +1225,9 @@ class UnifiedProxy:
                                 if response:
                                     response.close()
                                     response = None
-                                if playlist_url:
+                                if refresh_url:
                                     new_playlist, new_base, new_segments = self.refresh_playlist(
-                                        playlist_url, playlist_headers,
+                                        refresh_url, playlist_headers,
                                         fallback_url=self.original_playlist_urls.get(channel_key)
                                     )
                                     if new_playlist:
