@@ -94,9 +94,9 @@ MAX_RETRIES = 3
 MAX_RECONNECT_RETRIES = 2
 RETRY_DELAY = 0.3
 BUFFER_SIZE = 32768
-MAX_EOF_RECONNECTS = 20
-MAX_TOTAL_RECONNECTS = 30
-MAX_STALL_SECONDS = 60
+MAX_EOF_RECONNECTS = 3
+MAX_TOTAL_RECONNECTS = 5
+MAX_STALL_SECONDS = 10
 CLIENT_ALIVE_CHECK_EVERY = 1.0
 MAX_ACTIVE_CHANNEL_STREAMS = 12
 CACHE_ENTRY_TTL = 300
@@ -104,16 +104,16 @@ CACHE_CLEANUP_INTERVAL = 60
 PREFETCH_SEGMENT_COUNT = 1
 SEGMENT_CACHE_TTL = 600
 SEGMENT_CACHE_MAX = 60
-SOCKET_IDLE_TIMEOUT = 20
-SOCKET_STREAM_TIMEOUT = 20
+SOCKET_IDLE_TIMEOUT = 10
+SOCKET_STREAM_TIMEOUT = 10
 PREFETCH_TIMEOUT = 8
 PREFETCH_MAX_RETRIES = 2
-MAX_PREFETCH_THREADS = 6
+MAX_PREFETCH_THREADS = 2
 MAX_CONCURRENT_HANDLERS = 40
-CHANNEL_IDLE_ABORT_SECONDS = 15
+CHANNEL_IDLE_ABORT_SECONDS = 10
 PLAYLIST_REFRESH_INTERVAL = 600
 
-TOKEN_ERROR_CODES = {401, 403, 404, 410, 451, 500, 502, 503}
+AUTH_ERROR_CODES = {401, 403, 404, 410, 451}
 
 CHROME_UA = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -350,53 +350,9 @@ class CircularBuffer:
             self.total_bytes = 0
             self.stream_started = False
 
-class MP4Cache:
-    def __init__(self, max_chunks=250):
-        self.chunks = {}
-        self.max_chunks = max_chunks
-        self.lock = threading.Lock()
-        self.total_size = 0
-        self.content_length = None
-
-    def add_chunk(self, start_byte, data):
-        if not data:
-            return
-        with self.lock:
-            if start_byte not in self.chunks:
-                self.chunks[start_byte] = data
-                self.total_size += len(data)
-                while len(self.chunks) > self.max_chunks:
-                    oldest = min(self.chunks.keys())
-                    self.total_size -= len(self.chunks[oldest])
-                    del self.chunks[oldest]
-
-    def get_range(self, start, end):
-        with self.lock:
-            keys = sorted(self.chunks.keys())
-            if not keys:
-                return None
-            result = bytearray()
-            pos = start
-            while pos < end:
-                found = False
-                for chunk_start in keys:
-                    chunk = self.chunks[chunk_start]
-                    chunk_end = chunk_start + len(chunk)
-                    if chunk_start <= pos < chunk_end:
-                        offset = pos - chunk_start
-                        take = min(end - pos, chunk_end - pos)
-                        result.extend(chunk[offset:offset + take])
-                        pos += take
-                        found = True
-                        break
-                if not found:
-                    return None
-            return bytes(result)
-
 class UnifiedProxy:
     def __init__(self):
         self.channel_caches = {}
-        self.mp4_caches = {}
         self.ssl_context = ssl.create_default_context()
         self.ssl_context.check_hostname = False
         self.ssl_context.verify_mode = ssl.CERT_NONE
@@ -409,7 +365,6 @@ class UnifiedProxy:
         self.active_streams = 0
         self.active_streams_lock = threading.Lock()
         self.channel_cache_last_used = {}
-        self.mp4_cache_last_used = {}
         self.maintenance_started = False
         self.maintenance_lock = threading.Lock()
         self.channel_warmed_up = set()
@@ -426,6 +381,8 @@ class UnifiedProxy:
         self.original_playlist_urls = {}
         self.current_playlist_segments = []
         self.current_playlist_base = None
+        self.playlist_lock = threading.Lock()
+        self.current_playlist_content = None
 
     def get_user_agent_for_channel(self, channel_url):
         key = self.channel_key(channel_url)
@@ -456,12 +413,6 @@ class UnifiedProxy:
                 with self.warmup_lock:
                     for k in stale:
                         self.channel_warmed_up.discard(k)
-                with self.cache_lock:
-                    stale = [k for k, ts in self.mp4_cache_last_used.items()
-                             if now - ts > CACHE_ENTRY_TTL]
-                    for k in stale:
-                        self.mp4_caches.pop(k, None)
-                        self.mp4_cache_last_used.pop(k, None)
             except Exception:
                 pass
 
@@ -541,14 +492,6 @@ class UnifiedProxy:
             self.channel_cache_last_used[clean_url] = time.time()
             return self.channel_caches[clean_url]
 
-    def get_mp4_cache(self, url):
-        clean_url = re.sub(r'(_=\d+|timestamp=\d+|t=\d+|seq=\d+)', '', url)
-        with self.cache_lock:
-            if clean_url not in self.mp4_caches:
-                self.mp4_caches[clean_url] = MP4Cache(CACHE_MAX_CHUNKS)
-            self.mp4_cache_last_used[clean_url] = time.time()
-            return self.mp4_caches[clean_url]
-
     def fetch_channel_with_fallback(self, url, headers=None, range_header=None, cache=None,
                                      is_alive=None, max_retries=None, timeout=15):
         if headers is None:
@@ -591,7 +534,7 @@ class UnifiedProxy:
                     pass
                 return response, status_code, content_encoding
             except HTTPError as e:
-                if e.code in TOKEN_ERROR_CODES:
+                if e.code in AUTH_ERROR_CODES:
                     return None, e.code, None
                 if attempt < retries - 1:
                     if is_alive is not None and not is_alive():
@@ -608,8 +551,28 @@ class UnifiedProxy:
                 return None, 0, None
         return None, 0, None
 
+    def reconnect_stream(self, url, headers, cache, is_alive, channel_key, refresh_url, playlist_headers):
+        if refresh_url:
+            seg = self.refresh_and_locate_segment(url, refresh_url, playlist_headers, channel_key)
+            if seg != url:
+                response, status, _ = self.fetch_channel_with_fallback(
+                    seg, headers, None, cache, is_alive=is_alive, max_retries=MAX_RECONNECT_RETRIES
+                )
+                if response and status in (200, 206):
+                    return response, status, seg
+        response, status, _ = self.fetch_channel_with_fallback(
+            url, headers, None, cache, is_alive=is_alive, max_retries=MAX_RECONNECT_RETRIES
+        )
+        if response and status in (200, 206):
+            return response, status, url
+        return None, 0, url
+
     def segment_key(self, url):
-        return url
+        try:
+            parts = urlsplit(url)
+            return "{}://{}{}".format(parts.scheme, parts.netloc, parts.path)
+        except Exception:
+            return url.split('?', 1)[0]
 
     def get_cached_segment(self, url):
         key = self.segment_key(url)
@@ -637,18 +600,19 @@ class UnifiedProxy:
                 if oldest_key != key:
                     del self.segment_cache[oldest_key]
 
-    def download_complete_segment(self, url, headers, timeout=20, playlist_refresh_callback=None):
-        response, status, content_encoding = self.fetch_channel_with_fallback(
-            url, headers, max_retries=MAX_RETRIES, timeout=timeout
-        )
-        if response and status in (200, 206):
+    def _fetch_segment_bytes(self, url, headers, timeout, max_retries):
+        response = None
+        try:
+            response, status, content_encoding = self.fetch_channel_with_fallback(
+                url, headers, max_retries=max_retries, timeout=timeout
+            )
+            if not response or status not in (200, 206):
+                return None, status
             content_length = response.headers.get('content-length')
-            expected_size = None
-            if content_length:
-                try:
-                    expected_size = int(content_length)
-                except Exception:
-                    pass
+            try:
+                expected_size = int(content_length) if content_length else None
+            except Exception:
+                expected_size = None
             data = b""
             while True:
                 chunk = response.read(BUFFER_SIZE)
@@ -657,95 +621,41 @@ class UnifiedProxy:
                 data += chunk
                 if expected_size and len(data) >= expected_size:
                     break
-            response.close()
             if expected_size is not None and len(data) != expected_size:
-                return None
+                return None, status
             if content_encoding == 'gzip':
-                try:
-                    data = gzip.decompress(data)
-                except Exception:
-                    return None
+                data = gzip.decompress(data)
             elif content_encoding == 'deflate':
-                try:
-                    data = zlib.decompress(data)
-                except Exception:
-                    return None
-            if len(data) >= 188 and data[0] == 0x47:
-                return data
-            return None
-        if status in TOKEN_ERROR_CODES and playlist_refresh_callback:
-            playlist_refresh_callback()
-        return None
-
-    def download_segment_to_cache(self, url, headers):
-        response = None
-        try:
-            response, status_code, content_encoding = self.fetch_channel_with_fallback(
-                url, headers, max_retries=PREFETCH_MAX_RETRIES, timeout=PREFETCH_TIMEOUT
-            )
-            if response and status_code in [200, 206]:
-                content_length = response.headers.get('content-length')
-                expected_size = None
-                if content_length:
-                    try:
-                        expected_size = int(content_length)
-                    except Exception:
-                        pass
-                data = b""
-                while True:
-                    chunk = response.read(BUFFER_SIZE)
-                    if not chunk:
-                        break
-                    data += chunk
-                    if expected_size and len(data) >= expected_size:
-                        break
-                if expected_size is not None and len(data) != expected_size:
-                    return
-                try:
-                    if content_encoding == 'gzip':
-                        data = gzip.decompress(data)
-                    elif content_encoding == 'deflate':
-                        data = zlib.decompress(data)
-                except Exception:
-                    return
-                self.store_segment(url, data)
+                data = zlib.decompress(data)
+            if len(data) < 188 or data[0] != 0x47:
+                return None, status
+            return data, status
         except Exception:
-            pass
+            return None, 0
         finally:
             if response is not None:
                 try:
                     response.close()
                 except Exception:
                     pass
+
+    def download_complete_segment(self, url, headers, timeout=20):
+        data, _ = self._fetch_segment_bytes(url, headers, timeout=timeout, max_retries=MAX_RETRIES)
+        return data
+
+    def download_segment_to_cache(self, url, headers):
+        try:
+            data, _ = self._fetch_segment_bytes(
+                url, headers, timeout=PREFETCH_TIMEOUT, max_retries=PREFETCH_MAX_RETRIES
+            )
+            if data:
+                self.store_segment(url, data)
+        finally:
             with self.prefetching_lock:
                 self.prefetching.discard(self.segment_key(url))
             with self.prefetch_threads_lock:
                 if self.prefetch_threads_active > 0:
                     self.prefetch_threads_active -= 1
-
-    def extract_segments_with_duration(self, playlist_content, base_url):
-        segments = []
-        pending_duration = None
-        for line in playlist_content.split('\n'):
-            line = line.strip()
-            if not line:
-                continue
-            if line.startswith('#EXTINF'):
-                try:
-                    pending_duration = float(line.split(':', 1)[1].split(',', 1)[0])
-                except Exception:
-                    pending_duration = None
-                continue
-            if line.startswith('#'):
-                continue
-            try:
-                absolute = urljoin(base_url + '/', line)
-                if absolute.startswith(('http://', 'https://')):
-                    segments.append((absolute, pending_duration or 6.0))
-            except Exception:
-                pass
-            pending_duration = None
-        return segments
 
     def prefetch_segments(self, urls, headers, channel_key=None):
         to_fetch = []
@@ -782,6 +692,36 @@ class UnifiedProxy:
                     continue
             self.download_segment_to_cache(seg_url, headers)
 
+    def _segment_filename(self, url):
+        return url.split('/')[-1].split('?')[0]
+
+    def find_segment_by_filename(self, filename):
+        with self.playlist_lock:
+            segments = self.current_playlist_segments[:]
+        for seg in segments:
+            if self._segment_filename(seg) == filename:
+                return seg
+        return None
+
+    def refresh_and_locate_segment(self, old_url, refresh_url, playlist_headers, channel_key):
+        self.refresh_playlist(refresh_url, playlist_headers,
+                               fallback_url=self.original_playlist_urls.get(channel_key))
+        found = self.find_segment_by_filename(self._segment_filename(old_url))
+        return found or old_url
+
+    def prefetch_next_segments(self, served_url, headers, channel_key):
+        with self.playlist_lock:
+            segments = self.current_playlist_segments[:]
+        if not segments:
+            return
+        served_name = self._segment_filename(served_url)
+        for i, seg in enumerate(segments):
+            if self._segment_filename(seg) == served_name:
+                next_segments = segments[i + 1:i + 1 + PREFETCH_SEGMENT_COUNT]
+                if next_segments:
+                    self.prefetch_segments(next_segments, headers, channel_key=channel_key)
+                return
+
     def fetch_playlist(self, url, headers, fallback_url=None):
         try:
             response, status, _ = self.fetch_channel_with_fallback(
@@ -803,19 +743,27 @@ class UnifiedProxy:
             pass
         return None
 
+    def _parse_playlist_segments(self, playlist_text, base_url):
+        segments = []
+        for line in playlist_text.split('\n'):
+            line = line.strip()
+            if line and not line.startswith('#'):
+                absolute = urljoin(base_url + '/', line)
+                if absolute.startswith(('http://', 'https://')):
+                    segments.append(absolute)
+        return segments
+
     def refresh_playlist(self, playlist_url, headers, fallback_url=None):
         content = self.fetch_playlist(playlist_url, headers, fallback_url)
         if content:
             try:
                 playlist_text = content.decode('utf-8', errors='ignore')
                 base_url = playlist_url.rsplit('/', 1)[0]
-                segments = []
-                for line in playlist_text.split('\n'):
-                    line = line.strip()
-                    if line and not line.startswith('#'):
-                        absolute = urljoin(base_url + '/', line)
-                        if absolute.startswith(('http://', 'https://')):
-                            segments.append(absolute)
+                segments = self._parse_playlist_segments(playlist_text, base_url)
+                with self.playlist_lock:
+                    self.current_playlist_segments = segments
+                    self.current_playlist_base = base_url
+                    self.current_playlist_content = playlist_text
                 return playlist_text, base_url, segments
             except Exception:
                 pass
@@ -882,12 +830,14 @@ class UnifiedProxy:
         except Exception:
             pass
 
-    def _send_segment(self, wfile, data):
+    def _send_segment(self, wfile, data, keep_alive=False):
         try:
             wfile.write(b"HTTP/1.1 200 OK\r\n")
             wfile.write(b"Content-Type: video/mp2t\r\n")
             wfile.write(b"Access-Control-Allow-Origin: *\r\n")
             wfile.write(b"Cache-Control: no-cache\r\n")
+            if keep_alive:
+                wfile.write(b"Connection: keep-alive\r\n")
             wfile.write(f"Content-Length: {len(data)}\r\n".encode())
             wfile.write(b"\r\n")
             wfile.write(data)
@@ -910,11 +860,8 @@ class UnifiedProxy:
 
         playlist_url = playlist_original_url if playlist_original_url else url
         playlist_headers = headers
-        playlist_content = None
-        playlist_base = None
-        playlist_segments = []
-
         channel_key = self.channel_key(url)
+
         if not url.lower().endswith('.ts') and not playlist_original_url:
             self.original_playlist_urls[channel_key] = url
 
@@ -925,69 +872,23 @@ class UnifiedProxy:
             cached = self.get_cached_segment(url)
             if cached:
                 self._send_segment(wfile, cached)
+                self.prefetch_next_segments(url, headers, channel_key)
                 return
 
-            def playlist_refresh():
-                nonlocal playlist_content, playlist_base, playlist_segments
-                new_playlist, new_base, new_segments = self.refresh_playlist(
-                    refresh_url, playlist_headers,
-                    fallback_url=self.original_playlist_urls.get(channel_key)
-                )
-                if new_playlist:
-                    playlist_content = new_playlist
-                    playlist_base = new_base
-                    playlist_segments = new_segments
-
-            segment_data = None
-            for attempt in range(3):
-                segment_data = self.download_complete_segment(
-                    url, headers,
-                    playlist_refresh_callback=playlist_refresh if attempt == 0 else None
-                )
-                if segment_data is not None:
-                    break
-                if attempt == 0:
-                    playlist_refresh()
-                    time.sleep(RETRY_DELAY)
-                    continue
-                if playlist_segments:
-                    old_filename = url.split('/')[-1].split('?')[0]
-                    found_seg = None
-                    for seg in playlist_segments:
-                        seg_filename = seg.split('/')[-1].split('?')[0]
-                        if seg_filename == old_filename:
-                            found_seg = seg
-                            break
-                    if not found_seg and playlist_segments:
-                        found_seg = playlist_segments[0]
-                    if found_seg:
-                        segment_data = self.download_complete_segment(
-                            found_seg, headers,
-                            playlist_refresh_callback=None
-                        )
-                        if segment_data is not None:
-                            url = found_seg
-                            break
-                if not segment_data and playlist_segments:
-                    for seg in playlist_segments[:2]:
-                        seg_data = self.download_complete_segment(seg, headers)
-                        if seg_data is not None:
-                            segment_data = seg_data
-                            url = seg
-                            break
+            segment_data = self.download_complete_segment(url, headers)
+            if segment_data is None:
+                refreshed_url = self.refresh_and_locate_segment(url, refresh_url, playlist_headers, channel_key)
+                if refreshed_url != url:
+                    url = refreshed_url
+                    segment_data = self.download_complete_segment(url, headers)
 
             if segment_data is None:
-                if playlist_segments:
-                    seg = playlist_segments[0]
-                    segment_data = self.download_complete_segment(seg, headers)
-                    if segment_data:
-                        url = seg
-                if segment_data is None:
-                    self._send_error(wfile, 503, "Segmento indisponivel")
-                    return
+                self._send_error(wfile, 503, "Segmento indisponivel")
+                return
 
             self.store_segment(url, segment_data)
             self._send_segment(wfile, segment_data)
+            self.prefetch_next_segments(url, headers, channel_key)
             return
 
         cache = self.get_channel_cache(url)
@@ -996,14 +897,7 @@ class UnifiedProxy:
             cached_segment = self.get_cached_segment(url)
             if cached_segment:
                 try:
-                    wfile.write(b"HTTP/1.1 200 OK\r\n")
-                    wfile.write(b"Content-Type: video/mp2t\r\n")
-                    wfile.write(b"Access-Control-Allow-Origin: *\r\n")
-                    wfile.write(b"Cache-Control: no-cache\r\n")
-                    wfile.write(b"Connection: keep-alive\r\n")
-                    wfile.write("Content-Length: {}\r\n".format(len(cached_segment)).encode())
-                    wfile.write(b"\r\n")
-                    wfile.write(cached_segment)
+                    self._send_segment(wfile, cached_segment, keep_alive=True)
                     cache.add_chunk(cached_segment)
                     return
                 except (BrokenPipeError, socket.error):
@@ -1081,17 +975,14 @@ class UnifiedProxy:
                         content = raw_content
                     try:
                         playlist_text = content.decode('utf-8', errors='ignore')
-                        playlist_content = playlist_text
-                        playlist_base = content_url.rsplit('/', 1)[0]
-                        playlist_segments = []
-                        for line in playlist_text.split('\n'):
-                            line = line.strip()
-                            if line and not line.startswith('#'):
-                                absolute = urljoin(playlist_base + '/', line)
-                                if absolute.startswith(('http://', 'https://')):
-                                    playlist_segments.append(absolute)
+                        base_url = content_url.rsplit('/', 1)[0]
+                        segments = self._parse_playlist_segments(playlist_text, base_url)
+                        with self.playlist_lock:
+                            self.current_playlist_content = playlist_text
+                            self.current_playlist_base = base_url
+                            self.current_playlist_segments = segments
                         proxy_host = "127.0.0.1:{}".format(get_active_port())
-                        rewritten = self.rewrite_m3u8_urls(playlist_text, playlist_base,
+                        rewritten = self.rewrite_m3u8_urls(playlist_text, self.current_playlist_base,
                                                             proxy_host, headers,
                                                             channel_key=channel_key,
                                                             playlist_original_url=content_url)
@@ -1161,53 +1052,18 @@ class UnifiedProxy:
                             total_reconnects += 1
                             if not is_client_alive():
                                 break
-                            refreshed = False
-                            if refresh_url:
-                                new_playlist, new_base, new_segments = self.refresh_playlist(
-                                    refresh_url, playlist_headers,
-                                    fallback_url=self.original_playlist_urls.get(channel_key)
-                                )
-                                if new_playlist:
-                                    playlist_content = new_playlist
-                                    playlist_base = new_base
-                                    playlist_segments = new_segments
-                                    old_filename = url.split('/')[-1].split('?')[0]
-                                    for seg in new_segments:
-                                        if seg.endswith(old_filename):
-                                            new_response, new_status, _ = self.fetch_channel_with_fallback(
-                                                seg, headers, None, cache,
-                                                is_alive=is_client_alive, max_retries=MAX_RECONNECT_RETRIES
-                                            )
-                                            if new_response and new_status in [200, 206]:
-                                                if response:
-                                                    response.close()
-                                                response = new_response
-                                                expected_length = None
-                                                bytes_received = 0
-                                                consecutive_errors = 0
-                                                eof_reconnects = 0
-                                                last_progress = time.time()
-                                                refreshed = True
-                                                break
-                            if refreshed:
+                            new_response, new_status, new_url = self.reconnect_stream(
+                                url, headers, cache, is_client_alive, channel_key, refresh_url, playlist_headers
+                            )
+                            if new_response:
+                                url = new_url
+                                response = new_response
+                                expected_length = None
+                                bytes_received = 0
+                                consecutive_errors = 0
+                                eof_reconnects = 0
+                                last_progress = time.time()
                                 continue
-                            try:
-                                new_response, new_status, _ = self.fetch_channel_with_fallback(
-                                    url, headers, None, cache,
-                                    is_alive=is_client_alive, max_retries=MAX_RECONNECT_RETRIES
-                                )
-                                if new_response and new_status in [200, 206]:
-                                    if response:
-                                        response.close()
-                                    response = new_response
-                                    expected_length = None
-                                    bytes_received = 0
-                                    consecutive_errors = 0
-                                    eof_reconnects = 0
-                                    last_progress = time.time()
-                                    continue
-                            except Exception:
-                                pass
                             if not is_client_alive():
                                 break
                             time.sleep(1)
@@ -1220,53 +1076,23 @@ class UnifiedProxy:
                             total_reconnects += 1
                             if not is_client_alive():
                                 break
-                            refreshed = False
-                            try:
-                                if response:
+                            if response:
+                                try:
                                     response.close()
-                                    response = None
-                                if refresh_url:
-                                    new_playlist, new_base, new_segments = self.refresh_playlist(
-                                        refresh_url, playlist_headers,
-                                        fallback_url=self.original_playlist_urls.get(channel_key)
-                                    )
-                                    if new_playlist:
-                                        playlist_content = new_playlist
-                                        playlist_base = new_base
-                                        playlist_segments = new_segments
-                                        old_filename = url.split('/')[-1].split('?')[0]
-                                        for seg in new_segments:
-                                            if seg.endswith(old_filename):
-                                                new_response, new_status, _ = self.fetch_channel_with_fallback(
-                                                    seg, headers, None, cache,
-                                                    is_alive=is_client_alive, max_retries=MAX_RECONNECT_RETRIES
-                                                )
-                                                if new_response and new_status in [200, 206]:
-                                                    response = new_response
-                                                    expected_length = None
-                                                    bytes_received = 0
-                                                    consecutive_errors = 0
-                                                    last_progress = time.time()
-                                                    refreshed = True
-                                                    break
-                            except Exception:
-                                pass
-                            if refreshed:
+                                except Exception:
+                                    pass
+                                response = None
+                            new_response, new_status, new_url = self.reconnect_stream(
+                                url, headers, cache, is_client_alive, channel_key, refresh_url, playlist_headers
+                            )
+                            if new_response:
+                                url = new_url
+                                response = new_response
+                                expected_length = None
+                                bytes_received = 0
+                                consecutive_errors = 0
+                                last_progress = time.time()
                                 continue
-                            try:
-                                new_response, new_status, _ = self.fetch_channel_with_fallback(
-                                    url, headers, None, cache,
-                                    is_alive=is_client_alive, max_retries=MAX_RECONNECT_RETRIES
-                                )
-                                if new_response and new_status in [200, 206]:
-                                    response = new_response
-                                    expected_length = None
-                                    bytes_received = 0
-                                    consecutive_errors = 0
-                                    last_progress = time.time()
-                                    continue
-                            except Exception:
-                                pass
                         time.sleep(0.5)
         except Exception:
             pass
@@ -1278,138 +1104,6 @@ class UnifiedProxy:
                     pass
             if stream_slot_acquired:
                 self.release_stream_slot()
-
-    def fetch_mp4_with_retry(self, url, range_header=None, method='GET'):
-        for attempt in range(MAX_RETRIES):
-            try:
-                parsed = urlparse(url)
-                referer = f"{parsed.scheme}://{parsed.netloc}/"
-                headers = {
-                    'User-Agent': CHROME_UA,
-                    'Accept': 'video/mp4,video/*;q=0.9,*/*;q=0.8',
-                    'Accept-Language': 'pt-BR,pt;q=0.9',
-                    'Accept-Encoding': 'identity',
-                    'Connection': 'keep-alive',
-                    'Referer': referer,
-                    'Origin': f"{parsed.scheme}://{parsed.netloc}",
-                }
-                if range_header:
-                    headers['Range'] = range_header
-                req = Request(url, headers=headers, method=method)
-                if url.startswith('https'):
-                    response = urlopen(req, timeout=30, context=self.ssl_context)
-                else:
-                    response = urlopen(req, timeout=30)
-                return response
-            except Exception:
-                if attempt < MAX_RETRIES - 1:
-                    time.sleep(RETRY_DELAY)
-                    continue
-                return None
-        return None
-
-    def parse_range(self, range_header):
-        if not range_header:
-            return None
-        match = re.search(r'bytes=(\d+)-(\d*)', range_header)
-        if not match:
-            return None
-        start = int(match.group(1))
-        end = int(match.group(2)) if match.group(2) else None
-        return start, end
-
-    def parse_total_size(self, headers):
-        content_range = headers.get('Content-Range', '') or headers.get('content-range', '')
-        match = re.search(r"/(\d+)$", content_range)
-        if match:
-            return int(match.group(1))
-        content_length = headers.get('Content-Length') or headers.get('content-length')
-        if content_length and content_length.isdigit():
-            return int(content_length)
-        return None
-
-    def detect_mp4(self, url):
-        lower = url.lower()
-        if any(ext in lower for ext in ['.mp4', '.mkv', '.webm', '.f4v', '.mov', '.avi']):
-            return True
-        if '/play/' in lower:
-            return True
-        if 'xtream' in lower and ('/movie/' in lower or '/series/' in lower):
-            return True
-        return False
-
-    def handle_mp4_stream(self, url, method, req_headers, wfile):
-        cache = self.get_mp4_cache(url)
-        range_header = req_headers.get('range')
-        parsed_range = self.parse_range(range_header)
-        if parsed_range and parsed_range[1] is not None:
-            start, end = parsed_range
-            cached = cache.get_range(start, end + 1)
-            if cached:
-                total = cache.content_length or '*'
-                wfile.write("HTTP/1.1 206 Partial Content\r\n".encode())
-                wfile.write(b"Content-Type: video/mp4\r\n")
-                wfile.write(b"Accept-Ranges: bytes\r\n")
-                wfile.write("Content-Length: {}\r\n".format(len(cached)).encode())
-                wfile.write("Content-Range: bytes {}-{}/{}\r\n".format(start, start + len(cached) - 1, total).encode())
-                wfile.write(b"Access-Control-Allow-Origin: *\r\n")
-                wfile.write(b"\r\n")
-                wfile.write(cached)
-                return
-        upstream = self.fetch_mp4_with_retry(url, range_header=range_header, method=method)
-        if not upstream and range_header:
-            upstream = self.fetch_mp4_with_retry(url, range_header='bytes=0-', method=method)
-        if not upstream:
-            return
-        status = upstream.getcode()
-        total_size = self.parse_total_size(upstream.headers)
-        if total_size:
-            cache.content_length = total_size
-        pos = 0
-        if status == 206:
-            content_range = upstream.headers.get('Content-Range', '')
-            match = re.search(r'bytes\s+(\d+)-', content_range)
-            if match:
-                pos = int(match.group(1))
-            elif parsed_range:
-                pos = parsed_range[0]
-
-        if method in ('HEAD', 'OPTIONS'):
-            wfile.write("HTTP/1.1 {} OK\r\n".format(status).encode())
-            wfile.write("Content-Type: {}\r\n".format(upstream.headers.get('Content-Type', 'video/mp4')).encode())
-            wfile.write(b"Accept-Ranges: bytes\r\n")
-            if upstream.headers.get('Content-Length'):
-                wfile.write("Content-Length: {}\r\n".format(upstream.headers.get('Content-Length')).encode())
-            if upstream.headers.get('Content-Range'):
-                wfile.write("Content-Range: {}\r\n".format(upstream.headers.get('Content-Range')).encode())
-            wfile.write(b"Access-Control-Allow-Origin: *\r\n")
-            wfile.write(b"\r\n")
-            upstream.close()
-            return
-
-        wfile.write("HTTP/1.1 {} OK\r\n".format(status).encode())
-        wfile.write("Content-Type: {}\r\n".format(upstream.headers.get('Content-Type', 'video/mp4')).encode())
-        wfile.write(b"Accept-Ranges: bytes\r\n")
-        if upstream.headers.get('Content-Length'):
-            wfile.write("Content-Length: {}\r\n".format(upstream.headers.get('Content-Length')).encode())
-        if upstream.headers.get('Content-Range'):
-            wfile.write("Content-Range: {}\r\n".format(upstream.headers.get('Content-Range')).encode())
-        wfile.write(b"Access-Control-Allow-Origin: *\r\n")
-        wfile.write(b"\r\n")
-        try:
-            while True:
-                chunk = upstream.read(BUFFER_SIZE)
-                if not chunk:
-                    break
-                cache.add_chunk(pos, chunk)
-                pos += len(chunk)
-                wfile.write(chunk)
-        except (BrokenPipeError, socket.error):
-            pass
-        except Exception:
-            pass
-        finally:
-            upstream.close()
 
 class ProxyHandler(socketserver.StreamRequestHandler):
     proxy = UnifiedProxy()
@@ -1550,10 +1244,7 @@ class ProxyHandler(socketserver.StreamRequestHandler):
             headers = {}
             for key, value in self.headers.items():
                 headers[key.lower()] = value
-            if self.proxy.detect_mp4(url):
-                self.proxy.handle_mp4_stream(url, self.command, headers, self.wfile)
-            else:
-                self.proxy.handle_channel_stream(url, headers, self.wfile, getattr(self, 'connection', None), method=self.command, playlist_original_url=playlist_original_url)
+            self.proxy.handle_channel_stream(url, headers, self.wfile, getattr(self, 'connection', None), method=self.command, playlist_original_url=playlist_original_url)
         except Exception:
             try:
                 self.send_error(500, "Internal Server Error")
