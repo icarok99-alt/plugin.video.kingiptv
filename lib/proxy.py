@@ -614,7 +614,10 @@ class UnifiedProxy:
             except Exception:
                 expected_size = None
             data = b""
+            deadline = time.time() + timeout
             while True:
+                if time.time() > deadline:
+                    return None, status
                 chunk = response.read(BUFFER_SIZE)
                 if not chunk:
                     break
