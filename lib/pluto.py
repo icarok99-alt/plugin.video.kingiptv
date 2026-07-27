@@ -1,6 +1,5 @@
 # -*- coding: utf-8 -*-
 
-import uuid
 import re
 import threading
 import time
@@ -26,6 +25,7 @@ PLUTO_HEADERS = {
 }
 
 REQUEST_TIMEOUT = 20
+
 
 def build_session():
     session = requests.Session()
@@ -92,11 +92,14 @@ def load_pluto_epg_disk():
 
 
 def save_pluto_epg_disk(channels, day):
-    _pluto_safe_write_json(PLUTO_EPG_CACHE_PATH, {
+    return _pluto_safe_write_json(PLUTO_EPG_CACHE_PATH, {
         'day': day,
         'generated_at': int(time.time()),
         'channels': channels,
     })
+
+
+PLUTO_FETCH_LOCK = threading.Lock()
 
 
 def ensure_pluto_epg_background():
@@ -109,8 +112,8 @@ def ensure_pluto_epg_background():
         epg_fetch_active.set()
         try:
             playlist_pluto_epg()
-        except Exception as e:
-            log(f'ensure_pluto_epg_background: erro: {e}')
+        except Exception:
+            pass
         finally:
             epg_fetch_active.clear()
 
@@ -155,7 +158,9 @@ def _pluto_programs_index():
     with PLUTO_PROGRAMS_INDEX_LOCK:
         if PLUTO_PROGRAMS_INDEX['data'] is not None and PLUTO_PROGRAMS_INDEX['day'] == today:
             return PLUTO_PROGRAMS_INDEX['data']
-    channels = load_pluto_epg_disk() or []
+    channels = load_pluto_epg_disk()
+    if not channels:
+        return {}
     index = {}
     for ch in channels:
         index[ch.get('name') or ''] = ch.get('programs') or []
@@ -198,109 +203,19 @@ def to_lazy_channels(channels):
     return lite
 
 
-def playlist_pluto():
-    channels_kodi = []
-    try:
-        deviceid = str(uuid.uuid4())
-        time_brazil = get_current_time()
-        from_utc = time_brazil.astimezone(timezone.utc)
-        to_utc = (time_brazil + timedelta(days=1)).astimezone(timezone.utc)
-        from_str = from_utc.strftime('%Y-%m-%dT%H:%M:%SZ')
-        to_str = to_utc.strftime('%Y-%m-%dT%H:%M:%SZ')
-
-        url = f'https://api.pluto.tv/v2/channels?start={from_str}&stop={to_str}'
-        try:
-            r = SESSION.get(f'https://boot.pluto.tv/v4/start?appName=web&appVersion=9.19.0-7a6c115631d945c4f7327de3e03b7c474b692657&deviceVersion=148.0.0&deviceModel=web&deviceMake=firefox&deviceType=web&clientID=df8c4848-8b94-4323-9ca6-d0b802a9589c&clientModelNumber=1.0.0&channelSlug=5f120e94a5714d00074576a1&serverSideAds=false&drmCapabilities=widevine%3AL3&blockingMode=&notificationVersion=1&appLaunchCount=0&lastAppLaunchDate={from_str}&clientTime={to_str}', headers=PLUTO_HEADERS, timeout=REQUEST_TIMEOUT)
-            r.raise_for_status()
-            data_api = r.json()
-            session_token = data_api.get('sessionToken', '')
-            params = data_api.get('stitcherParams', '')
-        except Exception as e:
-            log(f'playlist_pluto: falha ao obter sessionToken/stitcherParams: {e}')
-            params = ''
-            session_token = ''
-
-        try:
-            resp = SESSION.get(url, headers=PLUTO_HEADERS, timeout=REQUEST_TIMEOUT)
-            resp.raise_for_status()
-            channels = resp.json()
-        except Exception as e:
-            log(f'playlist_pluto: falha ao obter lista de canais: {e}')
-            return channels_kodi
-
-        for channel in channels:
-            number = channel.get('number', 0)
-            if not number or int(number) <= 0:
-                continue
-
-            channel_name = channel.get('name', f'#{number}')
-            thumb = channel.get('logo', {}).get('path', '')
-            stream_url = None
-
-            stitched_urls = channel.get('stitched', {}).get('urls', [])
-            if stitched_urls:
-                stream_url = stitched_urls[0].get('url')
-                if stream_url:
-                    try:
-                        stream_url = stream_url.split('?')[0].replace("/stitch/hls/", "/v2/stitch/hls/")
-                        stream_url = f"{stream_url}?{params}&jwt={session_token}&masterJWTPassthrough=true&includeExtendedEvents=true&eventVOD=false&CMCD=mtp=1000,ot=m,sf=h"
-                        stream_url = (
-                            stream_url
-                            + '|User-Agent=' + quote_plus(USER_AGENT)
-                            + '&Referer=' + quote_plus('https://pluto.tv/')
-                            + '&Origin=' + quote_plus('https://pluto.tv')
-                        )
-                    except:
-                        pass
+PLUTO_EPG_WINDOW_HOURS = 6
 
 
-            timelines = channel.get('timelines', [])
-            current_program = None
-            next_program = None
-            for idx, t in enumerate(timelines):
-                start = parse_iso_datetime(t.get('start'))
-                stop = parse_iso_datetime(t.get('stop'))
-                if not start or not stop:
-                    continue
-                if start <= time_brazil <= stop:
-                    ep = t.get('episode', {})
-                    current_program = {
-                        'title': ep.get('name', ''),
-                        'description': ep.get('description', ''),
-                        'start': start,
-                        'stop': stop
-                    }
-                    if idx + 1 < len(timelines):
-                        nt = timelines[idx + 1]
-                        ns = parse_iso_datetime(nt.get('start'))
-                        ne = parse_iso_datetime(nt.get('stop'))
-                        nep = nt.get('episode', {})
-                        next_program = {
-                            'title': nep.get('name', ''),
-                            'description': nep.get('description', ''),
-                            'start': ns,
-                            'stop': ne
-                        }
-                    break
-
-            desc = ''
-            if current_program:
-                local_now = current_program['start'].astimezone(timezone(timedelta(hours=-3)))
-                desc += f"[COLOR yellow][{local_now.strftime('%H:%M')}] {current_program['title']}[/COLOR]\n({current_program['description']})\n"
-            if next_program:
-                local_next = next_program['start'].astimezone(timezone(timedelta(hours=-3)))
-                desc += f"[COLOR yellow][{local_next.strftime('%H:%M')}] {next_program['title']}[/COLOR]\n({next_program['description']})\n"
-
-            name_for_kodi = channel_name
-            if current_program and current_program.get('title'):
-                name_for_kodi = f"{channel_name} - [COLOR yellow]{current_program.get('title')}[/COLOR]"
-
-            channels_kodi.append((name_for_kodi, desc, thumb, stream_url))
-
-    except Exception as e:
-        log(f'playlist_pluto: erro geral: {e}')
-
-    return channels_kodi
+def _pluto_day_windows(time_brazil):
+    day_start = time_brazil.replace(hour=0, minute=0, second=0, microsecond=0)
+    day_end = day_start + timedelta(days=1)
+    windows = []
+    cursor = day_start
+    while cursor < day_end:
+        nxt = min(cursor + timedelta(hours=PLUTO_EPG_WINDOW_HOURS), day_end)
+        windows.append((cursor, nxt))
+        cursor = nxt
+    return windows
 
 
 def playlist_pluto_epg(force_refresh=False):
@@ -310,6 +225,15 @@ def playlist_pluto_epg(force_refresh=False):
         if disk_channels is not None:
             return disk_channels
 
+    with PLUTO_FETCH_LOCK:
+        if not force_refresh:
+            disk_channels = load_pluto_epg_disk()
+            if disk_channels is not None:
+                return disk_channels
+        return _fetch_pluto_epg(today)
+
+
+def _fetch_pluto_epg(today):
     result = []
     try:
         time_brazil = get_current_time()
@@ -318,7 +242,6 @@ def playlist_pluto_epg(force_refresh=False):
         from_str = from_utc.strftime('%Y-%m-%dT%H:%M:%SZ')
         to_str = to_utc.strftime('%Y-%m-%dT%H:%M:%SZ')
 
-        url = f'https://api.pluto.tv/v2/channels?start={from_str}&stop={to_str}'
         boot_url = (
             'https://boot.pluto.tv/v4/start?appName=web&appVersion=9.19.0-7a6c115631d945c4f7327de3e03b7c474b692657'
             '&deviceVersion=148.0.0&deviceModel=web&deviceMake=firefox&deviceType=web'
@@ -328,7 +251,8 @@ def playlist_pluto_epg(force_refresh=False):
         )
 
         boot_result = {}
-        channels_result = {}
+        window_results = {}
+        windows = _pluto_day_windows(time_brazil)
 
         def fetch_boot():
             try:
@@ -338,23 +262,26 @@ def playlist_pluto_epg(force_refresh=False):
             except Exception as e:
                 boot_result['error'] = e
 
-        def fetch_channels():
+        def fetch_window(idx, win_start, win_stop):
             try:
-                resp = SESSION.get(url, headers=PLUTO_HEADERS, timeout=REQUEST_TIMEOUT)
+                w_from = win_start.astimezone(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
+                w_to = win_stop.astimezone(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
+                w_url = f'https://api.pluto.tv/v2/channels?start={w_from}&stop={w_to}'
+                resp = SESSION.get(w_url, headers=PLUTO_HEADERS, timeout=REQUEST_TIMEOUT)
                 resp.raise_for_status()
-                channels_result['data'] = resp.json()
-            except Exception as e:
-                channels_result['error'] = e
+                window_results[idx] = resp.json()
+            except Exception:
+                window_results[idx] = []
 
-        t_boot = threading.Thread(target=fetch_boot, daemon=True)
-        t_channels = threading.Thread(target=fetch_channels, daemon=True)
-        t_boot.start()
-        t_channels.start()
-        t_boot.join(timeout=REQUEST_TIMEOUT + 5)
-        t_channels.join(timeout=REQUEST_TIMEOUT + 5)
+        threads = [threading.Thread(target=fetch_boot, daemon=True)]
+        for idx, (win_start, win_stop) in enumerate(windows):
+            threads.append(threading.Thread(target=fetch_window, args=(idx, win_start, win_stop), daemon=True))
+        for th in threads:
+            th.start()
+        for th in threads:
+            th.join(timeout=REQUEST_TIMEOUT + 5)
 
         if 'error' in boot_result:
-            log(f"playlist_pluto_epg: falha ao obter sessionToken/stitcherParams: {boot_result['error']}")
             params = ''
             session_token = ''
         else:
@@ -362,16 +289,25 @@ def playlist_pluto_epg(force_refresh=False):
             session_token = data_api.get('sessionToken', '')
             params = data_api.get('stitcherParams', '')
 
-        if 'error' in channels_result:
-            log(f"playlist_pluto_epg: falha ao obter lista de canais: {channels_result['error']}")
+        merged = {}
+        for idx in range(len(windows)):
+            for channel in window_results.get(idx) or []:
+                number = channel.get('number', 0)
+                if not number or int(number) <= 0:
+                    continue
+                key = channel.get('_id') or channel.get('slug') or channel.get('name')
+                entry = merged.get(key)
+                if entry is None:
+                    entry = {'meta': channel, 'timelines': []}
+                    merged[key] = entry
+                entry['timelines'].extend(channel.get('timelines', []) or [])
+
+        if not merged:
             return result
-        channels = channels_result.get('data') or []
 
-        for channel in channels:
+        for entry in merged.values():
+            channel = entry['meta']
             number = channel.get('number', 0)
-            if not number or int(number) <= 0:
-                continue
-
             channel_name = channel.get('name', f'#{number}')
             thumb = channel.get('logo', {}).get('path', '')
             stream_url = None
@@ -393,16 +329,21 @@ def playlist_pluto_epg(force_refresh=False):
                         pass
 
             programs = []
-            for t in channel.get('timelines', []) or []:
+            seen_starts = set()
+            for t in entry['timelines']:
                 start_dt = parse_iso_datetime(t.get('start'))
                 stop_dt = parse_iso_datetime(t.get('stop'))
                 if not start_dt or not stop_dt:
                     continue
+                start_ts = int(start_dt.timestamp())
+                if start_ts in seen_starts:
+                    continue
+                seen_starts.add(start_ts)
                 ep = t.get('episode', {}) or {}
                 programs.append({
                     'title': ep.get('name', '') or '',
                     'desc': ep.get('description', '') or '',
-                    'start': int(start_dt.timestamp()),
+                    'start': start_ts,
                     'end': int(stop_dt.timestamp()),
                 })
             programs.sort(key=lambda p: p.get('start') or 0)
@@ -414,8 +355,8 @@ def playlist_pluto_epg(force_refresh=False):
                 'programs': programs,
             })
 
-    except Exception as e:
-        log(f'playlist_pluto_epg: erro geral: {e}')
+    except Exception:
+        pass
 
     if result:
         save_pluto_epg_disk(result, today)

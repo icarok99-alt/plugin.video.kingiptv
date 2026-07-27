@@ -201,7 +201,7 @@ def _kick_epg_background(dns, username, password):
 
     def worker():
         try:
-            xtream.ensure_epg_background(dns, username, password)
+            xtream.ensure_epg_xml_background(dns, username, password)
         except Exception:
             pass
     threading.Thread(target=worker, daemon=True).start()
@@ -284,9 +284,20 @@ def build_iptv_play_item(name, description, iconimage, url):
 
 def show_channels_epg(param):
     dns, username, password, url = param['dns'], param['username'], param['password'], param['url']
-    channels = loading_nav.run_with_loading(
-        lambda: xtream.API(dns, username, password).channels_open_epg(url), message='Aguarde...'
-    )
+
+    def _load():
+        chs = xtream.API(
+            dns, username, password,
+            hide_adult=get_hide_adult(),
+            quality_mode=get_live_quality_mode(),
+        ).channels_open_epg(url)
+        if chs:
+            category_epg_ids = [c.get('epg_channel_id') for c in chs if c.get('epg_channel_id')]
+            if category_epg_ids:
+                xtream.build_epg_for_channels(dns, username, password, category_epg_ids)
+        return chs
+
+    channels = loading_nav.run_with_loading(_load, message='Aguarde...')
     if not channels:
         notify('Opção indisponível')
         return
@@ -309,7 +320,10 @@ def live_categories():
     dns, username, password = active['dns'], active['username'], active['password']
 
     cat = loading_nav.run_with_loading(
-        lambda: xtream.API(dns, username, password).channels_category(), message='Aguarde...'
+        lambda: xtream.API(
+            dns, username, password,
+            hide_adult=get_hide_adult(),
+        ).channels_category(), message='Aguarde...'
     )
     if not cat:
         _log_offline_list(dns, username, password)
@@ -317,7 +331,7 @@ def live_categories():
         return
 
     xtream.clear_account_offline(dns, username, password)
-    xtream.ensure_epg_background(dns, username, password)
+    xtream.ensure_epg_xml_background(dns, username, password)
 
     items = []
     for name, url in cat:

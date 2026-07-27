@@ -113,13 +113,22 @@ def build_url(query):
     return '{}?{}'.format(base, urlencode(query or {}))
 
 def opensettings():
-    addon.openSettings()
+    xbmcaddon.Addon().openSettings()
 
 def getsetting(text):
-    return addon.getSetting(text)
+    return xbmcaddon.Addon().getSetting(text)
 
 def setsetting(key,value):
-    return addon.setSetting(key, value)
+    return xbmcaddon.Addon().setSetting(key, value)
+
+def get_live_quality_mode():
+    return '720p' if getsetting('live_quality_mode') == '1' else '1080p'
+
+def is_adult_unlocked():
+    return getsetting('adult_unlocked') == 'true'
+
+def get_hide_adult():
+    return 'false' if is_adult_unlocked() else 'true'
 
 def exists(path):
     return xbmcvfs.exists(path)

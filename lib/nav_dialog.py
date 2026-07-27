@@ -16,15 +16,15 @@ HOME = xbmcgui.Window(10000)
 
 LIST_CONTROL = 3001
 UPCOMING_CONTROL = 3002
-PROGRESS_CONTROL = 3003
 BACK_BUTTON = 3010
 PEEK_BUTTON = 3099
 
 NAV_PROPS = (
     'nav.mode', 'nav.fanart', 'nav.title',
     'nav.detail.poster', 'nav.detail.title', 'nav.detail.secondary',
-    'nav.detail.desc', 'nav.detail.range', 'nav.detail.remaining',
-    'nav.backskin', 'nav.list.kind',
+    'nav.detail.desc', 'nav.detail.range', 'nav.detail.next',
+    'nav.list.kind',
+    'nav.backskin',
 )
 
 WINDOW_FULLSCREEN_VIDEO = 12005
@@ -47,6 +47,40 @@ def _log(msg, level=xbmc.LOGINFO):
 def _log_exc(where):
     import traceback
     _log('EXCEPTION em {0}:\n{1}'.format(where, traceback.format_exc()), xbmc.LOGERROR)
+
+
+MINI_PROGRESS_STEP = 10
+
+
+def _mini_progress_percent(start, end, now, step=MINI_PROGRESS_STEP):
+    start = int(start or 0)
+    end = int(end or 0)
+    if end <= start:
+        return 0
+    pct = max(0, min(100, int((now - start) * 100 / (end - start))))
+    return (pct // step) * step
+
+
+def _next_decile_boundary_time(start, end, now, step=MINI_PROGRESS_STEP):
+    start = int(start or 0)
+    end = int(end or 0)
+    if end <= start:
+        return None
+    duration = end - start
+    pct = max(0, min(100, int((now - start) * 100 / duration)))
+    next_pct = ((pct // step) + 1) * step
+    if next_pct > 100:
+        return None
+    return start + (next_pct * duration) / 100.0
+
+
+def _next_minute_boundary_time(end, now):
+    end = int(end or 0)
+    diff = end - now
+    if diff <= 0:
+        return None
+    rem = diff % 60
+    return now + (rem if rem else 60)
 
 
 class NavPlayerMonitor(xbmc.Player):
@@ -90,6 +124,7 @@ class NavDialog(xbmcgui.WindowXML):
         self.back_requested = False
         self.video_reclaimed = False
         self.select_event = threading.Event()
+        self._event_gen = -1
 
         self.alive = False
         self.ready_event = threading.Event()
@@ -100,14 +135,17 @@ class NavDialog(xbmcgui.WindowXML):
         self._epg_computed = set()
         self._epg_items = []
         self._epg_tick_signature = None
+        self._epg_pending = []
+        self._epg_pending_set = set()
+        self._fetch_pending = []
+        self._fetch_pending_set = set()
+        self._mini_percent_cache = {}
+        self._epg_wake_event = threading.Event()
 
         self._render_lock = threading.Lock()
-        self._backskin_active = False
-        self._video_seen_fullscreen = False
 
         self._is_playing = False
-        self._backskin_thread = None
-        self._backskin_thread_lock = threading.Lock()
+        self._expecting_own_playback = False
         self._player_monitor = NavPlayerMonitor(self)
         self._upcoming_signature = None
         self._upcoming_initialized = False
@@ -125,57 +163,43 @@ class NavDialog(xbmcgui.WindowXML):
         except Exception:
             _log_exc('onInit: checagem inicial de playback')
 
+    def _reassert_list_focus(self):
+        try:
+            self.setFocusId(LIST_CONTROL)
+        except Exception:
+            pass
+        try:
+            xbmc.executebuiltin('SetFocus({0})'.format(LIST_CONTROL))
+        except Exception:
+            pass
+        try:
+            container = self.getControl(LIST_CONTROL)
+            pos = container.getSelectedPosition()
+            if pos < 0:
+                pos = self.last_pos
+            container.selectItem(pos)
+        except Exception:
+            pass
+
     def _on_playback_started(self):
         _log('_on_playback_started: reproducao detectada (evento onPlayBackStarted/onAVStarted)')
         self._is_playing = True
-        self._start_backskin_watch()
+        if self.mode == 'epg' and self.alive and not self._expecting_own_playback:
+            self.video_reclaimed = True
+            self._reassert_list_focus()
+            self._signal_selection()
 
     def _on_playback_stopped(self):
         _log('_on_playback_stopped: reproducao encerrada (evento onPlayBackStopped/Ended/Error)')
         self._is_playing = False
-        self._video_seen_fullscreen = False
-        was_backskin_active = self._backskin_active
-        self._backskin_active = False
-        HOME.clearProperty('nav.backskin')
-        if was_backskin_active:
-            try:
-                self.setFocusId(LIST_CONTROL)
-            except Exception:
-                pass
 
         if self.mode == 'epg' and self.alive:
-            self._upcoming_signature = None
             if self._update_timer is not None:
                 self._update_timer.cancel()
                 self._update_timer = None
-            self._update_timer = threading.Timer(0.2, self._delayed_epg_update)
+            self._update_timer = threading.Timer(0.15, self._reassert_list_focus)
             self._update_timer.daemon = True
             self._update_timer.start()
-
-    def _delayed_epg_update(self):
-        self._update_timer = None
-        if self.alive and self.mode == 'epg':
-            try:
-                self._update_epg_details(self.last_pos)
-            except Exception:
-                _log_exc('_delayed_epg_update')
-
-    def _start_backskin_watch(self):
-        with self._backskin_thread_lock:
-            if self._backskin_thread is not None and self._backskin_thread.is_alive():
-                return
-            self._backskin_thread = threading.Thread(target=self._backskin_watch_loop, daemon=True)
-            self._backskin_thread.start()
-
-    def _backskin_watch_loop(self):
-        monitor = xbmc.Monitor()
-        while self.alive and self._is_playing:
-            try:
-                self._update_backskin_state()
-            except Exception:
-                pass
-            if monitor.waitForAbort(0.5):
-                return
 
     def close(self):
         _log('close() chamado; mode={0}'.format(self.mode))
@@ -194,6 +218,7 @@ class NavDialog(xbmcgui.WindowXML):
 
     def _begin_screen(self, mode):
         self._generation += 1
+        is_new_mode = self.mode != mode
         self.mode = mode
         self.selected_query = None
         self.selected_index = None
@@ -201,13 +226,20 @@ class NavDialog(xbmcgui.WindowXML):
         self.back_requested = False
         self.video_reclaimed = False
         self.select_event.clear()
-        self.opened_at = time.time()
-        self._backskin_active = False
+        self._event_gen = -1
+        if is_new_mode:
+            self.opened_at = time.time()
+        self._expecting_own_playback = False
         HOME.setProperty('nav.mode', mode)
         HOME.clearProperty('nav.list.playable')
         HOME.clearProperty('nav.list.kind')
         self._epg_tick_signature = None
         self._upcoming_initialized = False
+        with self._epg_lock:
+            self._epg_pending = []
+            self._epg_pending_set = set()
+            self._fetch_pending = []
+            self._fetch_pending_set = set()
 
     def push_home(self, items, fanart=''):
         _log('push_home: {0} itens; thread={1}; alive={2}'.format(len(items or []), threading.current_thread().name, self.alive))
@@ -240,6 +272,7 @@ class NavDialog(xbmcgui.WindowXML):
                 ch['programs'] = sorted(ch.get('programs') or [], key=lambda p: p.get('start') or 0)
         self.last_pos = start_pos if 0 <= start_pos < len(self.channels) else 0
         self._epg_computed = set()
+        self._mini_percent_cache = {}
         self._upcoming_signature = None
         self._upcoming_initialized = False
         HOME.setProperty('nav.fanart', fanart or '')
@@ -257,8 +290,27 @@ class NavDialog(xbmcgui.WindowXML):
             HOME.clearProperty('nav.loading')
             HOME.clearProperty('nav.loading.message')
 
+    def _signal_selection(self):
+        self._event_gen = self._generation
+        self.select_event.set()
+
     def wait_for_selection(self, timeout=None):
-        self.select_event.wait(timeout)
+        while True:
+            if not self.select_event.wait(timeout):
+                return
+            if timeout is not None:
+                return
+            if not self.alive:
+                return
+            if self._event_gen == self._generation:
+                return
+            _log('wait_for_selection: descartando evento obsoleto (event_gen={0}, generation={1})'.format(
+                self._event_gen, self._generation))
+            self.select_event.clear()
+            self.back_requested = False
+            self.selected_query = None
+            self.selected_index = None
+            self.selected_channel = None
 
     def _render_when_ready(self, timeout=DIALOG_READY_TIMEOUT):
         if not self.alive:
@@ -276,85 +328,17 @@ class NavDialog(xbmcgui.WindowXML):
                 self._render_current_locked(reset_focus)
             except Exception:
                 _log_exc('_render_current_locked (mode={0})'.format(self.mode))
-        self._update_backskin_state(force_focus=reset_focus)
 
-    def _maybe_activate_backskin_on_back(self):
+    def _can_return_to_playback(self):
+        return self._is_playing and self.mode == 'epg'
+
+    def _return_to_playback(self):
         try:
-            if not self._is_playing:
-                return False
-            if not self._video_seen_fullscreen:
-                return False
+            xbmc.executebuiltin('ActivateWindow({0})'.format(WINDOW_FULLSCREEN_VIDEO))
         except Exception:
+            _log_exc('_return_to_playback: ActivateWindow')
             return False
-
-        if self._backskin_active:
-            return False
-
-        self._backskin_active = True
-        HOME.setProperty('nav.backskin', 'true')
-        _log('_maybe_activate_backskin_on_back: on_back_skin ativado via acao BACK (mode={0})'.format(self.mode))
-        try:
-            self.setFocusId(PEEK_BUTTON)
-        except Exception:
-            _log_exc('_maybe_activate_backskin_on_back: setFocusId(PEEK_BUTTON)')
         return True
-
-    def _update_backskin_state(self, force_focus=False):
-        is_playing = self._is_playing
-
-        if not is_playing:
-            self._video_seen_fullscreen = False
-            playing = False
-        else:
-            try:
-                fullscreen_active = xbmc.getCondVisibility(
-                    'Window.IsActive({0})'.format(WINDOW_FULLSCREEN_VIDEO))
-            except Exception:
-                fullscreen_active = False
-            if fullscreen_active:
-                self._video_seen_fullscreen = True
-
-            playing = self._video_seen_fullscreen and not fullscreen_active
-
-        changed = playing != self._backskin_active
-        if not changed and not (force_focus and playing):
-            return
-
-        self._backskin_active = playing
-        if playing:
-            HOME.setProperty('nav.backskin', 'true')
-            if changed:
-                _log('_update_backskin_state: on_back_skin ativado (video tocando, mode={0})'.format(self.mode))
-            try:
-                self.setFocusId(PEEK_BUTTON)
-            except Exception:
-                _log_exc('_update_backskin_state: setFocusId(PEEK_BUTTON)')
-        else:
-            HOME.clearProperty('nav.backskin')
-            if changed:
-                _log('_update_backskin_state: on_back_skin desativado (mode={0})'.format(self.mode))
-            try:
-                self.setFocusId(LIST_CONTROL)
-            except Exception:
-                pass
-
-    def _handle_back_to_stream_click(self):
-        try:
-            if HOME.getProperty('nav.backskin') != 'true':
-                return False
-            if self._is_playing:
-                self._backskin_active = False
-                HOME.clearProperty('nav.backskin')
-                xbmc.executebuiltin('ActivateWindow({0})'.format(WINDOW_FULLSCREEN_VIDEO))
-                _log('onClick: on_back_stream ativo, retornando para reproducao (janela {0})'.format(
-                    WINDOW_FULLSCREEN_VIDEO))
-                return True
-            _log('_handle_back_to_stream_click: nav.backskin=true mas player nao esta tocando; limpando estado')
-            HOME.clearProperty('nav.backskin')
-            self._backskin_active = False
-        except Exception:
-            _log_exc('_handle_back_to_stream_click')
-        return False
 
     def _render_current_locked(self, reset_focus):
         container = self.getControl(LIST_CONTROL)
@@ -412,7 +396,6 @@ class NavDialog(xbmcgui.WindowXML):
             HOME.clearProperty('nav.detail.secondary')
             HOME.clearProperty('nav.detail.year')
             HOME.clearProperty('nav.detail.range')
-            HOME.clearProperty('nav.detail.remaining')
             HOME.clearProperty('nav.detail.title')
             HOME.clearProperty('nav.detail.poster')
             HOME.setProperty('nav.detail.crown', 'icon.png')
@@ -424,7 +407,6 @@ class NavDialog(xbmcgui.WindowXML):
                 return
             entry = self.items[pos]
             HOME.clearProperty('nav.detail.range')
-            HOME.clearProperty('nav.detail.remaining')
             HOME.setProperty('nav.detail.desc', entry.get('description', '') or '')
             HOME.setProperty('nav.detail.secondary', entry.get('secondary', '') or '')
             HOME.setProperty('nav.detail.year', entry.get('year', '') or '')
@@ -433,7 +415,7 @@ class NavDialog(xbmcgui.WindowXML):
             HOME.setProperty('nav.detail.crown', 'icon.png')
             HOME.setProperty('nav.detail.title', entry.get('label', '') if poster else '')
         elif self.mode == 'epg':
-            self._update_epg_details(pos)
+            self._update_epg_details(pos, force=False)
 
     def onAction(self, action):
         try:
@@ -441,23 +423,23 @@ class NavDialog(xbmcgui.WindowXML):
         except Exception:
             return xbmcgui.WindowXML.onAction(self, action)
 
+        if action_id == ACTION_MOVE_LEFT:
+            focus_id = self.getFocusId()
+            if focus_id == UPCOMING_CONTROL:
+                self.setFocusId(LIST_CONTROL)
+                return
+
         if action_id in (ACTION_PREVIOUS_MENU, ACTION_NAV_BACK):
             if time.time() - self.opened_at < REOPEN_GUARD_SECONDS:
                 _log('onAction: back ignorado (guarda de reabertura, mode={0})'.format(self.mode))
                 return
-            if self._maybe_activate_backskin_on_back():
-                _log('onAction: BACK consumido pelo on_back_skin (mode={0})'.format(self.mode))
+            if self._can_return_to_playback():
+                self._return_to_playback()
                 return
             _log('onAction: BACK solicitado (mode={0})'.format(self.mode))
             self.back_requested = True
-            self.select_event.set()
+            self._signal_selection()
             return
-
-        if action_id == ACTION_MOVE_LEFT and self.getFocusId() == LIST_CONTROL:
-            if HOME.getProperty('nav.backskin') == 'true':
-                if self._handle_back_to_stream_click():
-                    _log('onAction: LEFT consumido por on_back_stream (mode={0})'.format(self.mode))
-                    return
 
         xbmcgui.WindowXML.onAction(self, action)
         try:
@@ -467,6 +449,7 @@ class NavDialog(xbmcgui.WindowXML):
                     self.last_pos = pos
                     if self.mode == 'epg':
                         self._ensure_epg_window(pos)
+                        self._epg_wake_event.set()
                     self._update_details(pos)
         except Exception:
             _log_exc('onAction (mode={0})'.format(self.mode))
@@ -474,9 +457,6 @@ class NavDialog(xbmcgui.WindowXML):
     def onClick(self, control_id):
         _log('onClick: control_id={0} mode={1}'.format(control_id, self.mode))
         try:
-            if control_id == PEEK_BUTTON:
-                if self._handle_back_to_stream_click():
-                    return
             if control_id == LIST_CONTROL:
                 pos = self.getControl(LIST_CONTROL).getSelectedPosition()
                 if self.mode == 'home':
@@ -487,21 +467,21 @@ class NavDialog(xbmcgui.WindowXML):
                             return
                         self.selected_query = entry.get('query')
                         _log('onClick: home selecionou query={0}'.format(self.selected_query))
-                        self.select_event.set()
+                        self._signal_selection()
                 elif self.mode == 'list':
                     if 0 <= pos < len(self.items):
                         self.selected_index = pos
                         _log('onClick: list selecionou indice={0}'.format(pos))
-                        self.select_event.set()
+                        self._signal_selection()
                 elif self.mode == 'epg':
                     if 0 <= pos < len(self.channels):
                         self.selected_channel = self.channels[pos]
                         _log('onClick: epg selecionou canal={0}'.format(self.selected_channel.get('name')))
-                        self.select_event.set()
+                        self._signal_selection()
             elif control_id == BACK_BUTTON:
                 _log('onClick: botao BACK (mode={0})'.format(self.mode))
                 self.back_requested = True
-                self.select_event.set()
+                self._signal_selection()
         except Exception:
             _log_exc('onClick (control_id={0}, mode={1})'.format(control_id, self.mode))
 
@@ -547,9 +527,7 @@ class NavDialog(xbmcgui.WindowXML):
             li.setProperty('current', current.get('title', '') or '')
             start = int(current.get('start') or 0)
             end = int(current.get('end') or 0)
-            pct = 0
-            if end > start:
-                pct = max(0, min(100, int((now - start) * 100 / (end - start))))
+            pct = _mini_progress_percent(start, end, now)
             li.setProperty('percent', str(pct))
 
     def _sync_list_item_current(self, pos, current, pct):
@@ -558,10 +536,14 @@ class NavDialog(xbmcgui.WindowXML):
         li = self._epg_items[pos]
         if current:
             li.setProperty('current', current.get('title', '') or '')
-            li.setProperty('percent', str(pct))
+            if self._mini_percent_cache.get(pos) != pct:
+                li.setProperty('percent', str(pct))
+                self._mini_percent_cache[pos] = pct
         else:
             li.setProperty('current', '')
-            li.setProperty('percent', '0')
+            if self._mini_percent_cache.get(pos) != 0:
+                li.setProperty('percent', '0')
+                self._mini_percent_cache[pos] = 0
         self._epg_computed.add(pos)
 
     def _ensure_epg_window(self, pos, radius=16):
@@ -569,19 +551,11 @@ class NavDialog(xbmcgui.WindowXML):
             return
         lo = max(0, pos - radius)
         hi = min(len(self.channels) - 1, pos + radius)
-        missing = [idx for idx in range(lo, hi + 1) if idx not in self._epg_computed]
-        if not missing:
-            return
-        gen = self._generation
-        threading.Thread(target=self._compute_epg_indices_async, args=(missing, gen), daemon=True).start()
-
-    def _compute_epg_indices_async(self, indices, gen):
-        for idx in indices:
-            if not self.alive or self._generation != gen:
-                return
-            self._compute_epg_for_index(idx)
-            if idx == self.last_pos and self.mode == 'epg' and self._generation == gen:
-                self._update_details(idx)
+        with self._epg_lock:
+            for idx in range(lo, hi + 1):
+                if idx not in self._epg_computed and idx not in self._epg_pending_set:
+                    self._epg_pending.append(idx)
+                    self._epg_pending_set.add(idx)
 
     def _init_upcoming_container(self):
         if self._upcoming_initialized:
@@ -599,16 +573,16 @@ class NavDialog(xbmcgui.WindowXML):
         container.addItems(items)
         self._upcoming_initialized = True
 
-    def _update_epg_details(self, pos):
+    def _update_epg_details(self, pos, force=False):
         if self.mode != 'epg':
             return
         if pos < 0 or pos >= len(self.channels):
-            for prop in ('nav.detail.title', 'nav.detail.secondary', 'nav.detail.range', 'nav.detail.remaining'):
+            for prop in ('nav.detail.title', 'nav.detail.secondary', 'nav.detail.range', 'nav.detail.next'):
                 HOME.clearProperty(prop)
             self._epg_tick_signature = None
             self._upcoming_signature = None
             return
-        from lib.xtream import epg_lookup_current_next, epg_format_range
+        from lib.xtream import epg_lookup_current_next
 
         channel = self.channels[pos]
         programs = channel.get('programs')
@@ -618,78 +592,67 @@ class NavDialog(xbmcgui.WindowXML):
             HOME.setProperty('nav.detail.title', channel.get('name', '') or '')
             HOME.clearProperty('nav.detail.secondary')
             HOME.clearProperty('nav.detail.range')
-            HOME.clearProperty('nav.detail.remaining')
+            HOME.clearProperty('nav.detail.next')
             HOME.setProperty('nav.detail.desc', 'Carregando programação...')
-            try:
-                progress_ctrl = self.getControl(PROGRESS_CONTROL)
-                progress_ctrl.setPercent(0)
-            except Exception:
-                pass
-            gen = self._generation
-            threading.Thread(target=self._fetch_programs_then_refresh, args=(pos, gen), daemon=True).start()
+            with self._epg_lock:
+                if pos not in self._fetch_pending_set:
+                    self._fetch_pending.insert(0, pos)
+                    self._fetch_pending_set.add(pos)
             return
 
         current, nextp = epg_lookup_current_next(programs)
         now = int(time.time())
         sig = (pos, current.get('start'), current.get('title')) if current else (pos, None, None)
 
-        if sig == self._epg_tick_signature:
-            if current:
-                start = int(current.get('start') or 0)
-                end = int(current.get('end') or 0)
-                remaining = max(0, (end - now) // 60) if end else 0
-                pct = 0
-                if end > start:
-                    pct = max(0, min(100, int((now - start) * 100 / (end - start))))
-                HOME.setProperty('nav.detail.remaining', str(remaining))
-                try:
-                    self.getControl(PROGRESS_CONTROL).setPercent(pct)
-                except Exception:
-                    pass
-                self._sync_list_item_current(pos, current, pct)
+        if not force and sig == self._epg_tick_signature:
+            self._apply_progress_tick(pos, current, now)
             return
+
         self._epg_tick_signature = sig
+        self._apply_full_program_details(pos, channel, programs, current, nextp, now)
+
+    def _apply_progress_tick(self, pos, current, now):
+        if not current:
+            return
+        start = int(current.get('start') or 0)
+        end = int(current.get('end') or 0)
+        pct = _mini_progress_percent(start, end, now)
+        self._sync_list_item_current(pos, current, pct)
+
+    def _apply_full_program_details(self, pos, channel, programs, current, nextp, now):
+        from lib.xtream import epg_format_range
 
         HOME.setProperty('nav.detail.title', channel.get('name', '') or '')
 
-        try:
-            progress_ctrl = self.getControl(PROGRESS_CONTROL)
-        except Exception:
-            progress_ctrl = None
+        next_title = str(nextp.get('title') or '').strip() if nextp else ''
+        next_range = epg_format_range(nextp) if nextp else ''
+        if next_title and next_range:
+            next_label = '{} ({})'.format(next_title, next_range)
+        else:
+            next_label = next_title
 
         if current:
             start = int(current.get('start') or 0)
             end = int(current.get('end') or 0)
-            remaining = max(0, (end - now) // 60) if end else 0
-            pct = 0
-            if end > start:
-                pct = max(0, min(100, int((now - start) * 100 / (end - start))))
+            pct = _mini_progress_percent(start, end, now)
             HOME.setProperty('nav.detail.secondary', current.get('title', '') or '')
             HOME.setProperty('nav.detail.desc', current.get('desc') or 'Sem descricao disponivel.')
             HOME.setProperty('nav.detail.range', epg_format_range(current))
-            HOME.setProperty('nav.detail.remaining', str(remaining))
-            if progress_ctrl is not None:
-                progress_ctrl.setPercent(pct)
+            if next_label:
+                HOME.setProperty('nav.detail.next', next_label)
+            else:
+                HOME.clearProperty('nav.detail.next')
             self._sync_list_item_current(pos, current, pct)
         else:
             HOME.clearProperty('nav.detail.secondary')
             HOME.clearProperty('nav.detail.range')
-            HOME.clearProperty('nav.detail.remaining')
-            if nextp:
-                next_title = str(nextp.get('title') or '').strip()
-                next_range = epg_format_range(nextp)
-                if next_title and next_range:
-                    desc = 'Sem informacao da programacao atual para este canal.\nA seguir: {} ({})'.format(
-                        next_title, next_range)
-                elif next_title:
-                    desc = 'Sem informacao da programacao atual para este canal.\nA seguir: {}'.format(next_title)
-                else:
-                    desc = 'Sem informacao da programacao atual para este canal.'
+            if next_label:
+                HOME.setProperty('nav.detail.next', next_label)
+                desc = 'Sem informacao da programacao atual para este canal.\n{}'.format(next_label)
             else:
+                HOME.clearProperty('nav.detail.next')
                 desc = 'Programacao nao disponivel para este canal no momento.'
             HOME.setProperty('nav.detail.desc', desc)
-            if progress_ctrl is not None:
-                progress_ctrl.setPercent(0)
             self._sync_list_item_current(pos, None, 0)
 
         upcoming = [p for p in programs if int(p.get('start') or 0) > now]
@@ -729,32 +692,129 @@ class NavDialog(xbmcgui.WindowXML):
         if self.alive and self._generation == gen and self.mode == 'epg' and self.last_pos == pos:
             self._update_details(pos)
 
-    def _start_epg_threads(self):
-        gen = self._generation
-        threading.Thread(target=self._tick_loop, args=(gen,), daemon=True).start()
-        threading.Thread(target=self._lazy_epg_loop, args=(gen,), daemon=True).start()
-        threading.Thread(target=self._video_watch_loop, args=(gen,), daemon=True).start()
+    def _refresh_visible_percents(self, now, radius=16):
+        if not self.channels or not self._epg_items:
+            return None
+        from lib.xtream import epg_lookup_current_next
 
-    def _tick_loop(self, gen):
-        monitor = xbmc.Monitor()
-        elapsed = 0.0
-        step = 0.5
-        interval = 20.0
-        while self.alive and self._generation == gen:
-            if monitor.waitForAbort(step):
-                return
+        pos = self.last_pos
+        lo = max(0, pos - radius)
+        hi = min(len(self.channels) - 1, pos + radius)
+        with self._epg_lock:
+            computed = self._epg_computed
+            visible_idx = [idx for idx in range(lo, hi + 1) if idx in computed]
+        next_wake = None
+        for idx in visible_idx:
+            if idx >= len(self._epg_items):
+                continue
+            channel = self.channels[idx]
+            programs = channel.get('programs')
+            if not programs:
+                continue
+            current, _next = epg_lookup_current_next(programs)
+            li = self._epg_items[idx]
+            if current:
+                start = int(current.get('start') or 0)
+                end = int(current.get('end') or 0)
+                pct = _mini_progress_percent(start, end, now)
+                li.setProperty('current', current.get('title', '') or '')
+                if self._mini_percent_cache.get(idx) != pct:
+                    li.setProperty('percent', str(pct))
+                    self._mini_percent_cache[idx] = pct
+                boundary = _next_decile_boundary_time(start, end, now)
+                if boundary is not None and (next_wake is None or boundary < next_wake):
+                    next_wake = boundary
+            else:
+                li.setProperty('current', '')
+                if self._mini_percent_cache.get(idx) != 0:
+                    li.setProperty('percent', '0')
+                    self._mini_percent_cache[idx] = 0
+        return next_wake
+
+    def _drain_fetch_pending(self, gen, budget):
+        processed = 0
+        while processed < budget:
+            with self._epg_lock:
+                if not self._fetch_pending:
+                    return
+                pos = self._fetch_pending.pop(0)
+                self._fetch_pending_set.discard(pos)
             if not self.alive or self._generation != gen:
                 return
-            elapsed += step
-            if elapsed >= interval:
-                elapsed = 0.0
-                try:
-                    self._update_details(self.last_pos)
-                except Exception:
-                    pass
+            self._fetch_programs_then_refresh(pos, gen)
+            processed += 1
 
-    def _lazy_epg_loop(self, gen):
+    def _drain_epg_pending(self, gen, budget):
+        processed = 0
+        while processed < budget:
+            with self._epg_lock:
+                if not self._epg_pending:
+                    return
+                idx = self._epg_pending.pop(0)
+                self._epg_pending_set.discard(idx)
+            if not self.alive or self._generation != gen:
+                return
+            self._compute_epg_for_index(idx)
+            if idx == self.last_pos and self.mode == 'epg':
+                self._update_details(idx)
+            processed += 1
+
+    def _start_epg_threads(self):
+        gen = self._generation
+        threading.Thread(target=self._epg_background_loop, args=(gen,), daemon=True).start()
+
+    def _tick_focused_progress(self, now):
+        if self.mode != 'epg':
+            return None
+        pos = self.last_pos
+        if pos < 0 or pos >= len(self.channels):
+            return None
+        self._update_epg_details(pos, force=False)
+
+        channel = self.channels[pos]
+        programs = channel.get('programs')
+        if not programs:
+            return None
+        from lib.xtream import epg_lookup_current_next
+
+        current, _next = epg_lookup_current_next(programs)
+        if not current:
+            return None
+        start = current.get('start')
+        end = current.get('end')
+        candidates = [t for t in (
+            _next_minute_boundary_time(end, now),
+            _next_decile_boundary_time(start, end, now),
+        ) if t]
+        return min(candidates) if candidates else None
+
+    def _wait_for_epg_wake(self, monitor, total_seconds, poll_step):
+        deadline = time.time() + total_seconds
+        while True:
+            remaining = deadline - time.time()
+            if remaining <= 0:
+                self._epg_wake_event.clear()
+                return False, False
+            chunk = min(remaining, poll_step)
+            if monitor.waitForAbort(chunk):
+                return True, False
+            if self._epg_wake_event.is_set():
+                self._epg_wake_event.clear()
+                return False, True
+
+    def _epg_background_loop(self, gen):
         monitor = xbmc.Monitor()
+
+        fetch_budget = 2
+        compute_budget = 8
+        drain_poll = 0.05
+        idle_poll = 1.0
+        min_wake = 1.0
+        max_wake = 60.0
+        fullscreen_poll = 1.0
+
+        was_fullscreen = False
+
         total = len(self.channels)
         idx = 0
         processed_since_pause = 0
@@ -772,21 +832,62 @@ class NavDialog(xbmcgui.WindowXML):
                         return
             idx += 1
 
-    def _video_watch_loop(self, gen):
-        monitor = xbmc.Monitor()
-        player = xbmc.Player()
-        if monitor.waitForAbort(1.0):
+        if not self.alive or self._generation != gen:
             return
-        while self.alive and self._generation == gen:
-            try:
-                if player.isPlayingVideo():
-                    self.video_reclaimed = True
-                    self.select_event.set()
-                    return
-            except Exception:
-                pass
-            if monitor.waitForAbort(0.4):
+
+        next_wake = 0.0
+        while True:
+            sleep_for = idle_poll if next_wake <= 0 else max(min_wake, min(max_wake, next_wake - time.time()))
+            aborted, _woke_early = self._wait_for_epg_wake(monitor, sleep_for, idle_poll)
+            if aborted:
                 return
+            if not self.alive or self._generation != gen:
+                return
+
+            try:
+                self._drain_fetch_pending(gen, fetch_budget)
+                self._drain_epg_pending(gen, compute_budget)
+            except Exception:
+                _log_exc('_epg_background_loop: drenagem de filas')
+
+            if not self.alive or self._generation != gen:
+                return
+
+            with self._epg_lock:
+                pending_remaining = bool(self._fetch_pending or self._epg_pending)
+
+            now = time.time()
+
+            if xbmc.getCondVisibility('Window.IsActive(fullscreenvideo)'):
+                was_fullscreen = True
+                next_wake = now + fullscreen_poll
+                continue
+
+            if was_fullscreen:
+                was_fullscreen = False
+                try:
+                    self._reassert_list_focus()
+                except Exception:
+                    _log_exc('_epg_background_loop: reassert de foco pos-fullscreen')
+
+            if pending_remaining:
+                next_wake = now + drain_poll
+                continue
+
+            next_focus_wake = None
+            try:
+                next_focus_wake = self._tick_focused_progress(now)
+            except Exception:
+                _log_exc('_epg_background_loop: tick do foco')
+
+            next_visible_wake = None
+            try:
+                next_visible_wake = self._refresh_visible_percents(now)
+            except Exception:
+                _log_exc('_epg_background_loop: refresh dos visiveis')
+
+            candidates = [t for t in (next_focus_wake, next_visible_wake) if t]
+            next_wake = min(candidates) if candidates else (now + max_wake)
 
 
 _dialog = None
@@ -1001,7 +1102,9 @@ def open_skin(header, channels, build_listitem, fanart=''):
             live_monitor.started.set()
             live_monitor.stopped.clear()
             dlg.select_event.clear()
+            dlg._expecting_own_playback = True
             outcome = _wait_playback(dlg, live_monitor, monitor, selected)
+            dlg._expecting_own_playback = False
             if outcome in ('abort', 'back'):
                 return
             if outcome == 'switch':
@@ -1028,6 +1131,7 @@ def open_skin(header, channels, build_listitem, fanart=''):
         busy_suppressor.start()
         dlg.set_loading(True, 'Aguarde...')
         dlg.select_event.clear()
+        dlg._expecting_own_playback = True
         live_monitor.play(url, listitem)
 
         waited = 0.0
@@ -1035,6 +1139,7 @@ def open_skin(header, channels, build_listitem, fanart=''):
             if monitor.waitForAbort(0.1):
                 busy_suppressor.stop()
                 dlg.set_loading(False)
+                dlg._expecting_own_playback = False
                 return
             waited += 0.1
             if waited >= 30:
@@ -1047,10 +1152,12 @@ def open_skin(header, channels, build_listitem, fanart=''):
 
         if monitor.abortRequested():
             dlg.set_loading(False)
+            dlg._expecting_own_playback = False
             return
 
         if not live_monitor.started.is_set():
             dlg.set_loading(False)
+            dlg._expecting_own_playback = False
             xbmcgui.Dialog().notification(header, 'Nao foi possivel iniciar a reproducao deste canal', xbmcgui.NOTIFICATION_ERROR, 3000)
             need_render = True
             continue
@@ -1059,6 +1166,7 @@ def open_skin(header, channels, build_listitem, fanart=''):
         dlg.select_event.clear()
 
         outcome = _wait_playback(dlg, live_monitor, monitor, selected)
+        dlg._expecting_own_playback = False
         if outcome in ('abort', 'back'):
             return
         if outcome == 'switch':
@@ -1127,6 +1235,7 @@ def open_list_playback(header, items, build_listitem, fanart=''):
         busy_suppressor.start()
         dlg.set_loading(True, 'Aguarde...')
         dlg.select_event.clear()
+        dlg._expecting_own_playback = True
         live_monitor.play(url, listitem)
 
         waited = 0.0
@@ -1134,6 +1243,7 @@ def open_list_playback(header, items, build_listitem, fanart=''):
             if monitor.waitForAbort(0.1):
                 busy_suppressor.stop()
                 dlg.set_loading(False)
+                dlg._expecting_own_playback = False
                 return
             waited += 0.1
             if waited >= 30:
@@ -1146,10 +1256,12 @@ def open_list_playback(header, items, build_listitem, fanart=''):
 
         if monitor.abortRequested():
             dlg.set_loading(False)
+            dlg._expecting_own_playback = False
             return
 
         if not live_monitor.started.is_set():
             dlg.set_loading(False)
+            dlg._expecting_own_playback = False
             xbmcgui.Dialog().notification(header, 'Nao foi possivel iniciar a reproducao', xbmcgui.NOTIFICATION_ERROR, 3000)
             need_render = True
             continue
@@ -1158,6 +1270,7 @@ def open_list_playback(header, items, build_listitem, fanart=''):
         dlg.select_event.clear()
 
         outcome = _wait_playback_list(dlg, live_monitor, monitor, idx)
+        dlg._expecting_own_playback = False
         if outcome in ('abort', 'back'):
             return
         if outcome == 'switch':
