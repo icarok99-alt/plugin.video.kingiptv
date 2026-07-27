@@ -896,12 +896,9 @@ class UnifiedProxy:
         if not url.lower().endswith('.m3u8'):
             cached_segment = self.get_cached_segment(url)
             if cached_segment:
-                try:
-                    self._send_segment(wfile, cached_segment, keep_alive=True)
-                    cache.add_chunk(cached_segment)
-                    return
-                except (BrokenPipeError, socket.error):
-                    return
+                self._send_segment(wfile, cached_segment, keep_alive=True)
+                cache.add_chunk(cached_segment)
+                return
 
         client_gone = [False]
 
