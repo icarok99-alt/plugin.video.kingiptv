@@ -26,25 +26,6 @@ PLUTO_HEADERS = {
 
 REQUEST_TIMEOUT = 20
 
-TAG = '[plugin.video.kingiptv][pluto]'
-
-
-def _log(msg, level=None):
-    try:
-        if level is None:
-            level = xbmc.LOGINFO
-        xbmc.log('{0} {1}'.format(TAG, msg), level)
-    except Exception:
-        pass
-
-
-def _log_exc(where):
-    try:
-        import traceback
-        xbmc.log('{0} EXCEPTION em {1}:\n{2}'.format(TAG, where, traceback.format_exc()), xbmc.LOGERROR)
-    except Exception:
-        pass
-
 
 def build_session():
     session = requests.Session()
@@ -76,7 +57,7 @@ def _pluto_safe_read_json(path):
             with open(path, 'r', encoding='utf-8') as f:
                 return json.load(f)
     except Exception:
-        _log_exc('_pluto_safe_read_json ({0})'.format(path))
+        pass
     return {}
 
 
@@ -93,7 +74,6 @@ def _pluto_safe_write_json(path, data):
         os.rename(tmp, path)
         return True
     except Exception:
-        _log_exc('_pluto_safe_write_json ({0})'.format(path))
         return False
 
 
@@ -112,7 +92,7 @@ def load_pluto_epg_disk():
 
 
 def save_pluto_epg_disk(channels, day):
-    _pluto_safe_write_json(PLUTO_EPG_CACHE_PATH, {
+    return _pluto_safe_write_json(PLUTO_EPG_CACHE_PATH, {
         'day': day,
         'generated_at': int(time.time()),
         'channels': channels,
@@ -126,17 +106,14 @@ def ensure_pluto_epg_background():
     if load_pluto_epg_disk() is not None:
         return
     if epg_fetch_active.is_set():
-        _log('ensure_pluto_epg_background: fetch ja em andamento, ignorando novo agendamento')
         return
 
     def worker():
         epg_fetch_active.set()
-        _log('ensure_pluto_epg_background: iniciando pre-fetch em segundo plano')
         try:
-            channels = playlist_pluto_epg()
-            _log('ensure_pluto_epg_background: pre-fetch concluido com {0} canais'.format(len(channels or [])))
+            playlist_pluto_epg()
         except Exception:
-            _log_exc('ensure_pluto_epg_background.worker')
+            pass
         finally:
             epg_fetch_active.clear()
 
@@ -181,7 +158,9 @@ def _pluto_programs_index():
     with PLUTO_PROGRAMS_INDEX_LOCK:
         if PLUTO_PROGRAMS_INDEX['data'] is not None and PLUTO_PROGRAMS_INDEX['day'] == today:
             return PLUTO_PROGRAMS_INDEX['data']
-    channels = load_pluto_epg_disk() or []
+    channels = load_pluto_epg_disk()
+    if not channels:
+        return {}
     index = {}
     for ch in channels:
         index[ch.get('name') or ''] = ch.get('programs') or []
@@ -247,19 +226,14 @@ def playlist_pluto_epg(force_refresh=False):
             return disk_channels
 
     with PLUTO_FETCH_LOCK:
-        # Outra chamada (sincrona ou pre-fetch em segundo plano) pode ja ter
-        # terminado o download enquanto esperavamos o lock. Reaproveita o
-        # resultado em vez de disparar uma segunda leva de requisicoes ao Pluto.
         if not force_refresh:
             disk_channels = load_pluto_epg_disk()
             if disk_channels is not None:
-                _log('playlist_pluto_epg: outro fetch concluiu o cache enquanto aguardavamos o lock')
                 return disk_channels
         return _fetch_pluto_epg(today)
 
 
 def _fetch_pluto_epg(today):
-    _log('playlist_pluto_epg: iniciando download do EPG Pluto TV')
     result = []
     try:
         time_brazil = get_current_time()
@@ -287,7 +261,6 @@ def _fetch_pluto_epg(today):
                 boot_result['data'] = r.json()
             except Exception as e:
                 boot_result['error'] = e
-                _log('fetch_boot falhou: {0}'.format(e), xbmc.LOGWARNING)
 
         def fetch_window(idx, win_start, win_stop):
             try:
@@ -297,9 +270,8 @@ def _fetch_pluto_epg(today):
                 resp = SESSION.get(w_url, headers=PLUTO_HEADERS, timeout=REQUEST_TIMEOUT)
                 resp.raise_for_status()
                 window_results[idx] = resp.json()
-            except Exception as e:
+            except Exception:
                 window_results[idx] = []
-                _log('fetch_window[{0}] falhou: {1}'.format(idx, e), xbmc.LOGWARNING)
 
         threads = [threading.Thread(target=fetch_boot, daemon=True)]
         for idx, (win_start, win_stop) in enumerate(windows):
@@ -308,9 +280,6 @@ def _fetch_pluto_epg(today):
             th.start()
         for th in threads:
             th.join(timeout=REQUEST_TIMEOUT + 5)
-            if th.is_alive():
-                _log('playlist_pluto_epg: uma thread nao terminou dentro do timeout de {0}s (rede lenta?)'
-                     .format(REQUEST_TIMEOUT + 5), xbmc.LOGWARNING)
 
         if 'error' in boot_result:
             params = ''
@@ -319,11 +288,6 @@ def _fetch_pluto_epg(today):
             data_api = boot_result.get('data') or {}
             session_token = data_api.get('sessionToken', '')
             params = data_api.get('stitcherParams', '')
-
-        failed_windows = [idx for idx in range(len(windows)) if not window_results.get(idx)]
-        if failed_windows:
-            _log('playlist_pluto_epg: {0}/{1} janelas de horario falharam ({2})'
-                 .format(len(failed_windows), len(windows), failed_windows), xbmc.LOGWARNING)
 
         merged = {}
         for idx in range(len(windows)):
@@ -339,8 +303,6 @@ def _fetch_pluto_epg(today):
                 entry['timelines'].extend(channel.get('timelines', []) or [])
 
         if not merged:
-            _log('playlist_pluto_epg: nenhum canal retornado (todas as janelas falharam ou API do Pluto '
-                 'esta fora do ar)', xbmc.LOGWARNING)
             return result
 
         for entry in merged.values():
@@ -394,12 +356,9 @@ def _fetch_pluto_epg(today):
             })
 
     except Exception:
-        _log_exc('playlist_pluto_epg')
+        pass
 
     if result:
-        saved = save_pluto_epg_disk(result, today)
-        _log('playlist_pluto_epg: concluido com {0} canais (salvo em disco={1})'.format(len(result), saved))
-    else:
-        _log('playlist_pluto_epg: finalizado sem nenhum canal, cache NAO foi atualizado', xbmc.LOGWARNING)
+        save_pluto_epg_disk(result, today)
 
     return result
