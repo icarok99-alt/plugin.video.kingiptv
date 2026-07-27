@@ -102,8 +102,8 @@ MAX_ACTIVE_CHANNEL_STREAMS = 12
 CACHE_ENTRY_TTL = 300
 CACHE_CLEANUP_INTERVAL = 60
 PREFETCH_SEGMENT_COUNT = 1
-SEGMENT_CACHE_TTL = 600
-SEGMENT_CACHE_MAX = 60
+SEGMENT_CACHE_TTL = 300
+SEGMENT_CACHE_MAX = 20
 SOCKET_IDLE_TIMEOUT = 10
 SOCKET_STREAM_TIMEOUT = 10
 PREFETCH_TIMEOUT = 8
@@ -570,9 +570,9 @@ class UnifiedProxy:
     def segment_key(self, url):
         try:
             parts = urlsplit(url)
-            return "{}://{}{}".format(parts.scheme, parts.netloc, parts.path)
+            return "{}://{}{}?{}".format(parts.scheme, parts.netloc, parts.path, parts.query)
         except Exception:
-            return url.split('?', 1)[0]
+            return url
 
     def get_cached_segment(self, url):
         key = self.segment_key(url)
