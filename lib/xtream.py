@@ -12,6 +12,7 @@ from requests.packages.urllib3.util.retry import Retry
 from lib.helper import *
 import re
 import time
+import random
 from urllib.parse import urlparse, parse_qs
 
 IPTV_PROBLEM_LOG = translate(os.path.join(profile, 'iptv_problems_log.txt'))
@@ -19,16 +20,40 @@ REQUEST_TIMEOUT = 10
 MAX_RETRIES = 1
 CACHE_FAILED_URLS = {}
 EPG_XML_TTL = 86400
-EPG_XML_INDEX_VERSION = 'kingIPTV_epg'
+EPG_XML_INDEX_VERSION = 'kingIPTV_epg_v2'
 EPG_INDEX_MEMORY = {}
 EPG_INDEX_LOCK = threading.Lock()
 EPG_ACTIVE = set()
 EPG_ACTIVE_LOCK = threading.Lock()
-BROWSER_UA = (
+USER_AGENTS = (
     'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
-    'AppleWebKit/537.36 (KHTML, like Gecko) '
-    'Chrome/130.0.0.0 Safari/537.36'
+    'AppleWebKit/537.36 (KHTML, like Gecko) Chrome/132.0.0.0 Safari/537.36',
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
+    'AppleWebKit/537.36 (KHTML, like Gecko) Chrome/132.0.0.0 Safari/537.36 Edg/132.0.0.0',
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:133.0) '
+    'Gecko/20100101 Firefox/133.0',
+    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) '
+    'AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.2 Safari/605.1.15',
+    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) '
+    'AppleWebKit/537.36 (KHTML, like Gecko) Chrome/132.0.0.0 Safari/537.36',
+    'Mozilla/5.0 (X11; Linux x86_64) '
+    'AppleWebKit/537.36 (KHTML, like Gecko) Chrome/132.0.0.0 Safari/537.36',
+    'Mozilla/5.0 (Linux; Android 14; SM-S928B) '
+    'AppleWebKit/537.36 (KHTML, like Gecko) Chrome/132.0.0.0 Mobile Safari/537.36',
+    'Mozilla/5.0 (SMART-TV; Linux; Tizen 7.0) '
+    'AppleWebKit/537.36 (KHTML, like Gecko) 85.0.4183.93/7.0 TV Safari/537.36',
 )
+
+def get_user_agent():
+    return random.choice(USER_AGENTS)
+
+def rotate_session_ua(session):
+    try:
+        session.headers['User-Agent'] = get_user_agent()
+    except Exception:
+        pass
+    return session
+
 KINGIPTV_EPG_COLOR = 'gold'
 EPG_HEADER_COLOR = 'gold'
 EPG_CURRENT_COLOR = 'gold'
@@ -56,7 +81,7 @@ def create_session():
     adapter = HTTPAdapter(max_retries=retry)
     session.mount('http://', adapter)
     session.mount('https://', adapter)
-    session.headers.update({'User-Agent': BROWSER_UA})
+    session.headers.update({'User-Agent': get_user_agent()})
     return session
 
 def log_iptv_problem(url, error_msg=''):
@@ -105,7 +130,8 @@ def first_clean_text(data, *keys):
 
 EMOJI_PATTERN = re.compile(
     "["
-    "\U0001F1E0-\U0001F1FF"
+    "\U0001F100-\U0001F1FF"
+    "\U0001F200-\U0001F2FF"
     "\U0001F300-\U0001F5FF"
     "\U0001F600-\U0001F64F"
     "\U0001F680-\U0001F6FF"
@@ -115,14 +141,17 @@ EMOJI_PATTERN = re.compile(
     "\U0001F900-\U0001F9FF"
     "\U0001FA00-\U0001FA6F"
     "\U0001FA70-\U0001FAFF"
+    "\U00002190-\U000021FF"
+    "\U00002300-\U000023FF"
+    "\U00002460-\U000024FF"
+    "\U000025A0-\U000025FF"
     "\U00002600-\U000026FF"
     "\U00002700-\U000027BF"
     "\U00002B00-\U00002BFF"
-    "\U0001F1E6-\U0001F1FF"
-    "\U00002190-\U000021FF"
-    "\U00002300-\U000023FF"
-    "\U0000FE00-\U0000FE0F"
+    "\U00003200-\U000032FF"
     "\U0000200D"
+    "\U000020E3"
+    "\U0000FE00-\U0000FE0F"
     "]+",
     flags=re.UNICODE,
 )
@@ -145,37 +174,108 @@ def clean_category_name(name):
     name = re.sub(r'\s+', ' ', name).strip()
     return name
 
-def clean_channel_name(name):
-    if not name:
-        return name
-    sufixos_res = [
-        'HD', 'FHD', 'SD', '4K', 'UHD', 'HD+', 'HD¹', 'HD²', 'HD2', 'HD1',
-        'FHD¹', 'FHD²', 'SD¹', 'SD²', '4K¹', '4K²', 'UHD¹', 'UHD²',
-        'H264', 'H265', 'H264¹', 'H264²', 'H265¹', 'H265²',
-        'PLUS', 'PLUS¹', 'PLUS²', 'PREMIUM', 'PREMIUM¹', 'PREMIUM²',
-        'MAX', 'MAX¹', 'MAX²',
-    ]
-    pattern = r'\[(' + '|'.join(re.escape(s) for s in sufixos_res) + r')\]'
-    name = re.sub(pattern, r'\1', name)
-    codecs = ['H264', 'H265', 'HEVC', 'AVC', 'X264', 'X265']
-    pattern2 = r'\((' + '|'.join(re.escape(c) for c in codecs) + r')\)'
-    name = re.sub(pattern2, r'\1', name)
-    name = re.sub(r'\s*\[\d{1,2}:\d{2}\s*-\s*\d{1,2}:\d{2}\]', '', name)
-    name = re.sub(r'\s*\+\s*\d+\.?\d*\s*min', '', name)
-    name = re.sub(r'\s+', ' ', name).strip()
+SUPERSCRIPTS = '¹²³⁴⁵⁶⁷⁸⁹⁰'
+
+QUALITY_TAGS = ['FHDR', 'FHD\\+', 'FHD', 'UHD', 'HD\\+', 'HD', 'SD', '4K']
+CODEC_TAGS = ['H265', 'H264', 'HEVC', 'AVC', 'X265', 'X264']
+RESOLUTION_TAGS = QUALITY_TAGS + CODEC_TAGS
+
+def _tags_pattern(tags):
+    return '|'.join(tags)
+
+def _normalize_tag(raw_tag):
+    return raw_tag.upper().replace('\\+', '+')
+
+_QUALITY_TAGS_NORMALIZED = {_normalize_tag(t) for t in QUALITY_TAGS}
+
+_TRAILING_TAG_RE = re.compile(
+    r'[\s\-\|]+(' + _tags_pattern(RESOLUTION_TAGS) + r')[' + SUPERSCRIPTS + r']?\s*$',
+    flags=re.IGNORECASE,
+)
+
+def _strip_trailing_tags(name, keep_quality):
+    quality_found = None
+    while True:
+        match = _TRAILING_TAG_RE.search(name)
+        if not match:
+            break
+        tag = _normalize_tag(match.group(1))
+        name = name[:match.start()]
+        if keep_quality and tag in _QUALITY_TAGS_NORMALIZED and quality_found is None:
+            quality_found = tag
+    if quality_found:
+        name = '{} {}'.format(name, quality_found)
     return name
 
-def ordenar_resolucao(item):
-    name = item[0]
-    if 'FHD' in name:
+def _clean_channel_name_impl(name, keep_quality):
+    if not name:
+        return name
+    name = clean_text(name)
+    if not name:
+        return name
+
+    name = strip_emoji(name)
+    if not name:
+        return name
+
+    bracketed_pattern = (
+        r'[\[\(]\s*(?:' + _tags_pattern(RESOLUTION_TAGS) + r')[' + SUPERSCRIPTS + r']?\s*[\]\)]'
+    )
+    name = re.sub(bracketed_pattern, '', name, flags=re.IGNORECASE)
+    name = re.sub(r'\s+', ' ', name).strip()
+
+    name = _strip_trailing_tags(name, keep_quality)
+
+    name = re.sub(r'\s*\[\d{1,2}:\d{2}\s*-\s*\d{1,2}:\d{2}\]', '', name)
+    name = re.sub(r'\s*\+\s*\d+\.?\d*\s*min', '', name, flags=re.IGNORECASE)
+    name = re.sub(r'[\[\(]\s*[\]\)]', '', name)
+
+    name = re.sub(r'\s+', ' ', name).strip(' -|.')
+    return name
+
+def clean_channel_name(name):
+    return _clean_channel_name_impl(name, keep_quality=False)
+
+def channel_dedup_key(name):
+    return _clean_channel_name_impl(name, keep_quality=False).strip().lower()
+
+def ordenar_resolucao(name, quality_mode='1080p'):
+    name = (name or '').upper()
+    is_fhd = 'FHD' in name
+    is_h265 = 'H265' in name or 'HEVC' in name or 'X265' in name
+    is_h264 = 'H264' in name or 'AVC' in name or 'X264' in name
+    is_uhd = 'UHD' in name or '4K' in name
+    is_hd = 'HD' in name and not is_fhd and not is_uhd
+    is_sd = 'SD' in name
+
+    if quality_mode == '720p':
+        if is_hd:
+            return 1
+        if is_h264:
+            return 2
+        if is_h265:
+            return 3
+        if is_sd:
+            return 4
+        if is_fhd:
+            return 5
+        if is_uhd:
+            return 6
+        return 7
+
+    if is_fhd:
         return 1
-    elif 'HD' in name:
+    if is_h265:
         return 2
-    elif '4K' in name:
+    if is_h264:
         return 3
-    elif 'SD' in name:
+    if is_uhd:
         return 4
-    return 5
+    if is_hd:
+        return 5
+    if is_sd:
+        return 6
+    return 7
 
 def normalize_epg_channel_id(value):
     return str(value or '').strip().lower()
@@ -466,14 +566,14 @@ def download_epg_xml(dns, username, password):
         '{}/epg.php?username={}&password={}'.format(dns, username, password),
         '{}/api.php?username={}&password={}&type=m3u_plus&output=ts'.format(dns, username, password),
     ]
-    headers = {
-        'User-Agent': BROWSER_UA,
-        'Accept': 'application/xml,text/xml,*/*;q=0.9',
-        'Accept-Language': 'pt-BR,pt;q=0.9,en-US;q=0.8',
-        'Connection': 'close',
-    }
     for url in urls:
         try:
+            headers = {
+                'User-Agent': get_user_agent(),
+                'Accept': 'application/xml,text/xml,*/*;q=0.9',
+                'Accept-Language': 'pt-BR,pt;q=0.9,en-US;q=0.8',
+                'Connection': 'close',
+            }
             response = requests.get(url, timeout=20, headers=headers, allow_redirects=True, verify=False, stream=True)
             if response.status_code != 200:
                 continue
@@ -510,21 +610,36 @@ def download_epg_xml(dns, username, password):
             continue
     return False
 
-def build_epg_index(dns, username, password):
+def build_epg_index(dns, username, password, channel_ids=None):
     paths = epg_paths(dns)
     if not os.path.exists(paths['xml']):
         log_iptv_problem(dns, 'Arquivo XML não encontrado')
         return False
+
+    wanted = set(channel_ids) if channel_ids else None
+
     now_ts = int(time.time())
     window_start = now_ts - 21600
     window_end = now_ts + 129600
-    log_iptv_problem(dns, f'Janela: {window_start} a {window_end} (now={now_ts})')
+    log_iptv_problem(dns, f'Janela: {window_start} a {window_end} (now={now_ts}); canais solicitados={len(wanted) if wanted is not None else "todos"}')
+
     channels = {}
+    covered = set()
+    existing = safe_read_json(paths['index'])
+    if (isinstance(existing.get('channels'), dict)
+            and existing.get('version') == EPG_XML_INDEX_VERSION
+            and existing.get('fingerprint') == epg_fingerprint(dns, username, password)
+            and existing.get('day') == current_day_key()):
+        channels = dict(existing.get('channels') or {})
+        covered = set(existing.get('covered_channels') or channels.keys())
+
     total_programmes = 0
     total_with_cid = 0
     total_in_window = 0
     total_saved = 0
+    total_skipped_not_wanted = 0
     logged_first = False
+    touched_this_build = set()
     try:
         for event, elem in ET.iterparse(paths['xml'], events=('end',)):
             tag = get_local_tag(elem)
@@ -538,6 +653,13 @@ def build_epg_index(dns, username, password):
             total_programmes += 1
             cid = normalize_epg_channel_id(elem.get('channel'))
             if not cid:
+                try:
+                    elem.clear()
+                except Exception:
+                    pass
+                continue
+            if wanted is not None and cid not in wanted:
+                total_skipped_not_wanted += 1
                 try:
                     elem.clear()
                 except Exception:
@@ -588,7 +710,10 @@ def build_epg_index(dns, username, password):
                     pass
                 continue
             desc = xml_child_text(elem, 'desc')
-            channels.setdefault(cid, []).append({
+            if cid not in touched_this_build:
+                touched_this_build.add(cid)
+                channels[cid] = []
+            channels[cid].append({
                 'start': start,
                 'end': end,
                 'title': title,
@@ -599,9 +724,9 @@ def build_epg_index(dns, username, password):
                 elem.clear()
             except Exception:
                 pass
-        log_iptv_problem(dns, f'Resumo: programmes={total_programmes}, com_cid={total_with_cid}, na_janela={total_in_window}, salvos={total_saved}')
+        log_iptv_problem(dns, f'Resumo: programmes={total_programmes}, com_cid={total_with_cid}, fora_da_categoria_ignorados={total_skipped_not_wanted}, na_janela={total_in_window}, salvos={total_saved}')
         total_dedup_removed = 0
-        for cid in channels:
+        for cid in touched_this_build:
             channels[cid].sort(key=lambda x: x.get('start') or 0)
             deduped = []
             seen = set()
@@ -615,10 +740,17 @@ def build_epg_index(dns, username, password):
             channels[cid] = deduped
         if total_dedup_removed:
             log_iptv_problem(dns, f'Deduplicação: {total_dedup_removed} programas repetidos removidos')
+
+        if wanted is not None:
+            covered |= wanted
+        else:
+            covered |= set(channels.keys())
+
         safe_write_json(paths['index'], {
             'version': EPG_XML_INDEX_VERSION,
             'fingerprint': epg_fingerprint(dns, username, password),
             'generated_at': int(time.time()),
+            'covered_channels': sorted(covered),
             'day': current_day_key(),
             'window_start': window_start,
             'window_end': window_end,
@@ -660,11 +792,70 @@ def is_account_marked_offline(dns, username, password):
 def _account_marked_offline(dns, username, password):
     return is_account_marked_offline(dns, username, password)
 
-def ensure_epg_background(dns, username, password):
-    if epg_index_fresh(dns, username, password):
+def epg_channels_covered(dns, username, password, channel_ids):
+    if not channel_ids:
+        return True
+    if not epg_index_fresh(dns, username, password):
+        return False
+    index = load_epg_index(dns)
+    covered = set(index.get('covered_channels') or (index.get('channels') or {}).keys())
+    wanted = {normalize_epg_channel_id(c) for c in channel_ids if c}
+    return wanted.issubset(covered)
+
+
+def build_epg_for_channels(dns, username, password, channel_ids):
+    wanted = {normalize_epg_channel_id(c) for c in channel_ids if c}
+    if not wanted:
+        return
+    if epg_channels_covered(dns, username, password, wanted):
         return
     if is_account_marked_offline(dns, username, password):
         return
+    try:
+        if not epg_xml_fresh(dns, username, password):
+            if not download_epg_xml(dns, username, password):
+                return
+        build_epg_index(dns, username, password, channel_ids=wanted)
+    except Exception as e:
+        log_iptv_problem(dns, f'Erro EPG síncrono: {e}')
+
+
+def ensure_epg_xml_background(dns, username, password):
+    if epg_xml_fresh(dns, username, password):
+        return
+    if is_account_marked_offline(dns, username, password):
+        return
+    lock_key = epg_fingerprint(dns, username, password) + '|xml'
+    with EPG_ACTIVE_LOCK:
+        if lock_key in EPG_ACTIVE:
+            return
+        EPG_ACTIVE.add(lock_key)
+    def worker():
+        try:
+            download_epg_xml(dns, username, password)
+        except Exception as e:
+            log_iptv_problem(dns, f'Worker EPG XML erro: {e}')
+        finally:
+            with EPG_ACTIVE_LOCK:
+                EPG_ACTIVE.discard(lock_key)
+    t = threading.Thread(target=worker)
+    t.daemon = True
+    t.start()
+
+
+def ensure_epg_background(dns, username, password, channel_ids=None):
+    if channel_ids is None:
+        ensure_epg_xml_background(dns, username, password)
+        return
+
+    wanted = {normalize_epg_channel_id(c) for c in channel_ids if c}
+    if not wanted:
+        return
+    if epg_channels_covered(dns, username, password, wanted):
+        return
+    if is_account_marked_offline(dns, username, password):
+        return
+
     lock_key = epg_fingerprint(dns, username, password)
     with EPG_ACTIVE_LOCK:
         if lock_key in EPG_ACTIVE:
@@ -672,14 +863,7 @@ def ensure_epg_background(dns, username, password):
         EPG_ACTIVE.add(lock_key)
     def worker():
         try:
-            xml_fresh = epg_xml_fresh(dns, username, password)
-            index_fresh = epg_index_fresh(dns, username, password)
-            if not index_fresh:
-                if not xml_fresh:
-                    if download_epg_xml(dns, username, password):
-                        build_epg_index(dns, username, password)
-                else:
-                    build_epg_index(dns, username, password)
+            build_epg_for_channels(dns, username, password, wanted)
         except Exception as e:
             log_iptv_problem(dns, f'Worker EPG erro: {e}')
         finally:
@@ -770,6 +954,7 @@ def parselist(url):
     iptv = []
     session = create_session()
     try:
+        rotate_session_ua(session)
         response = session.get(url, timeout=REQUEST_TIMEOUT)
         url = response.json()['url']
     except Exception:
@@ -779,6 +964,7 @@ def parselist(url):
             try:
                 key = url.split('/')[-1]
                 url = 'https://paste.kodi.tv/documents/' + key
+                rotate_session_ua(session)
                 src = session.get(url, timeout=REQUEST_TIMEOUT).json()['data']
                 for i in src.split('\n'):
                     i = i.replace(' ', '')
@@ -789,6 +975,7 @@ def parselist(url):
             except Exception as e:
                 log_iptv_problem(url, 'Erro paste.kodi.tv: {}'.format(e))
         else:
+            rotate_session_ua(session)
             src = session.get(url, timeout=REQUEST_TIMEOUT).text
             for i in src.split('\n'):
                 i = i.replace(' ', '')
@@ -801,7 +988,7 @@ def parselist(url):
     return iptv
 
 class API:
-    def __init__(self, dns, username, password, hide_adult='true'):
+    def __init__(self, dns, username, password, hide_adult='true', quality_mode='1080p'):
         if not username or not password:
             raise ValueError('Username e password são obrigatórios')
         self.dns = dns
@@ -814,6 +1001,7 @@ class API:
         self.adult_tags = ['xxx', 'xXx', 'XXX', 'adult', 'Adult', 'ADULT',
                            'porn', 'Porn', 'PORN', 'teste', 'TESTE', 'Teste']
         self.hide_adult = hide_adult
+        self.quality_mode = quality_mode
         self.session = create_session()
     def b64(self, obj):
         return decode_b64_safe(obj)
@@ -832,6 +1020,7 @@ class API:
         return not self.is_adult(name)
     def http(self, url='', mode=None):
         try:
+            rotate_session_ua(self.session)
             if not mode:
                 r = self.session.get(url, timeout=REQUEST_TIMEOUT)
                 if r.status_code != 200:
@@ -886,7 +1075,8 @@ class API:
             return result
         for stream in json_data:
             try:
-                name = clean_channel_name(stream.get('name', '') or '')
+                raw_name = stream.get('name', '') or ''
+                name = clean_channel_name(raw_name)
                 stream_id = stream.get('stream_id')
                 if not stream_id:
                     continue
@@ -898,12 +1088,35 @@ class API:
                     'programs': None,
                     'epg_channel_id': epg_channel_id,
                     'epg_dns': self.dns,
+                    '_raw_name': raw_name,
                 })
             except Exception:
                 continue
-        if result:
-            result = sorted(result, key=lambda x: x['name'].lower())
-        return result
+
+        groups = {}
+        for item in result:
+            key = channel_dedup_key(item['_raw_name'])
+            groups.setdefault(key, []).append(item)
+
+        filtered = []
+        for group in groups.values():
+            if len(group) == 1:
+                filtered.append(group[0])
+                continue
+            group.sort(key=lambda g: ordenar_resolucao(g['_raw_name'], self.quality_mode))
+            chosen = group[0]
+            if not chosen['epg_channel_id']:
+                with_epg = [g for g in group if g['epg_channel_id']]
+                if with_epg:
+                    chosen['epg_channel_id'] = with_epg[0]['epg_channel_id']
+            filtered.append(chosen)
+
+        for item in filtered:
+            item.pop('_raw_name', None)
+
+        if filtered:
+            filtered = sorted(filtered, key=lambda x: x['name'].lower())
+        return filtered
     def series_cat(self):
         itens = []
         url_ser = '{}&action=get_series_categories'.format(self.player_api)
