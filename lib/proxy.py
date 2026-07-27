@@ -113,6 +113,26 @@ MAX_CONCURRENT_HANDLERS = 40
 CHANNEL_IDLE_ABORT_SECONDS = 10
 PLAYLIST_REFRESH_INTERVAL = 600
 
+EXTINF_RE = re.compile(r'#EXTINF:\s*([\d.]+)')
+TARGETDURATION_RE = re.compile(r'#EXT-X-TARGETDURATION:\s*(\d+(?:\.\d+)?)')
+MEDIA_SEQUENCE_RE = re.compile(r'#EXT-X-MEDIA-SEQUENCE:\s*(\d+)')
+MIN_PLAYLIST_INTERVAL_FLOOR = 2.0
+
+PLAYLIST_REFRESH_BY_TARGET = {
+    15: 10.0,
+    20: 13.3,
+    25: 16.7,
+    30: 20.0,
+    35: 23.3,
+    40: 26.7,
+    45: 30.0,
+    50: 33.3,
+    55: 36.7,
+    60: 40.0,
+}
+PLAYLIST_REFRESH_TOLERANCE = 1.0
+PLAYLIST_REFRESH_RATIO_DEFAULT = 2.0 / 3.0
+
 AUTH_ERROR_CODES = {401, 403, 404, 410, 451}
 
 CHROME_UA = (
@@ -373,16 +393,11 @@ class UnifiedProxy:
         self.prefetch_threads_lock = threading.Lock()
         self.active_handlers = 0
         self.active_handlers_lock = threading.Lock()
-        self.current_playlist_url = None
-        self.current_playlist_headers = None
-        self.playlist_last_refresh = {}
         self.channel_ua_cache = {}
         self.channel_ua_lock = threading.Lock()
         self.original_playlist_urls = {}
-        self.current_playlist_segments = []
-        self.current_playlist_base = None
         self.playlist_lock = threading.Lock()
-        self.current_playlist_content = None
+        self.playlist_state = {}
 
     def get_user_agent_for_channel(self, channel_url):
         key = self.channel_key(channel_url)
@@ -698,25 +713,29 @@ class UnifiedProxy:
     def _segment_filename(self, url):
         return url.split('/')[-1].split('?')[0]
 
-    def find_segment_by_filename(self, filename):
+    def find_segment_by_filename(self, channel_key, filename):
         with self.playlist_lock:
-            segments = self.current_playlist_segments[:]
-        for seg in segments:
-            if self._segment_filename(seg) == filename:
-                return seg
+            state = self.playlist_state.get(channel_key)
+        if not state:
+            return None
+        for seg_url, _dur in state['segments']:
+            if self._segment_filename(seg_url) == filename:
+                return seg_url
         return None
 
     def refresh_and_locate_segment(self, old_url, refresh_url, playlist_headers, channel_key):
-        self.refresh_playlist(refresh_url, playlist_headers,
-                               fallback_url=self.original_playlist_urls.get(channel_key))
-        found = self.find_segment_by_filename(self._segment_filename(old_url))
+        self.get_playlist_state(channel_key, refresh_url, playlist_headers,
+                                 fallback_url=self.original_playlist_urls.get(channel_key),
+                                 force=True)
+        found = self.find_segment_by_filename(channel_key, self._segment_filename(old_url))
         return found or old_url
 
     def prefetch_next_segments(self, served_url, headers, channel_key):
         with self.playlist_lock:
-            segments = self.current_playlist_segments[:]
-        if not segments:
+            state = self.playlist_state.get(channel_key)
+        if not state or not state['segments']:
             return
+        segments = [s[0] for s in state['segments']]
         served_name = self._segment_filename(served_url)
         for i, seg in enumerate(segments):
             if self._segment_filename(seg) == served_name:
@@ -725,52 +744,124 @@ class UnifiedProxy:
                     self.prefetch_segments(next_segments, headers, channel_key=channel_key)
                 return
 
-    def fetch_playlist(self, url, headers, fallback_url=None):
-        try:
-            response, status, _ = self.fetch_channel_with_fallback(
-                url, headers, max_retries=2, timeout=10
-            )
-            if response and status in (200, 206):
-                content = response.read()
-                response.close()
-                return content
-            if fallback_url:
-                response, status, _ = self.fetch_channel_with_fallback(
-                    fallback_url, headers, max_retries=2, timeout=10
+    def fetch_playlist_raw(self, url, headers, fallback_url=None):
+        candidates = [url]
+        if fallback_url and fallback_url != url:
+            candidates.append(fallback_url)
+        for candidate in candidates:
+            try:
+                response, status, content_encoding = self.fetch_channel_with_fallback(
+                    candidate, headers, max_retries=2, timeout=10
                 )
                 if response and status in (200, 206):
-                    content = response.read()
+                    raw = response.read()
+                    final_url = response.geturl() or candidate
                     response.close()
-                    return content
-        except Exception:
-            pass
-        return None
+                    try:
+                        if content_encoding == 'gzip':
+                            raw = gzip.decompress(raw)
+                        elif content_encoding == 'deflate':
+                            raw = zlib.decompress(raw)
+                    except Exception:
+                        pass
+                    return raw, final_url
+            except Exception:
+                continue
+        return None, None
 
     def _parse_playlist_segments(self, playlist_text, base_url):
         segments = []
-        for line in playlist_text.split('\n'):
-            line = line.strip()
-            if line and not line.startswith('#'):
-                absolute = urljoin(base_url + '/', line)
-                if absolute.startswith(('http://', 'https://')):
-                    segments.append(absolute)
-        return segments
+        target_duration = None
+        media_sequence = None
+        pending_duration = None
+        for raw_line in playlist_text.split('\n'):
+            line = raw_line.strip()
+            if not line:
+                continue
+            if line.startswith('#EXT-X-TARGETDURATION'):
+                m = TARGETDURATION_RE.search(line)
+                if m:
+                    try:
+                        target_duration = float(m.group(1))
+                    except Exception:
+                        pass
+                continue
+            if line.startswith('#EXT-X-MEDIA-SEQUENCE'):
+                m = MEDIA_SEQUENCE_RE.search(line)
+                if m:
+                    try:
+                        media_sequence = int(m.group(1))
+                    except Exception:
+                        pass
+                continue
+            if line.startswith('#EXTINF'):
+                m = EXTINF_RE.search(line)
+                if m:
+                    try:
+                        pending_duration = float(m.group(1))
+                    except Exception:
+                        pending_duration = None
+                continue
+            if line.startswith('#'):
+                continue
+            absolute = urljoin(base_url + '/', line)
+            if absolute.startswith(('http://', 'https://')):
+                segments.append((absolute, pending_duration))
+            pending_duration = None
+        return segments, target_duration, media_sequence
 
-    def refresh_playlist(self, playlist_url, headers, fallback_url=None):
-        content = self.fetch_playlist(playlist_url, headers, fallback_url)
-        if content:
-            try:
-                playlist_text = content.decode('utf-8', errors='ignore')
-                base_url = playlist_url.rsplit('/', 1)[0]
-                segments = self._parse_playlist_segments(playlist_text, base_url)
-                with self.playlist_lock:
-                    self.current_playlist_segments = segments
-                    self.current_playlist_base = base_url
-                    self.current_playlist_content = playlist_text
-                return playlist_text, base_url, segments
-            except Exception:
-                pass
-        return None, None, None
+    def _compute_min_interval(self, total_duration):
+        if total_duration and total_duration > 0:
+            for tier, refresh in PLAYLIST_REFRESH_BY_TARGET.items():
+                if abs(total_duration - tier) <= PLAYLIST_REFRESH_TOLERANCE:
+                    return max(refresh, MIN_PLAYLIST_INTERVAL_FLOOR)
+            interval = total_duration * PLAYLIST_REFRESH_RATIO_DEFAULT
+        else:
+            interval = 6.0 * PLAYLIST_REFRESH_RATIO_DEFAULT
+        return max(interval, MIN_PLAYLIST_INTERVAL_FLOOR)
+
+    def _ingest_playlist_text(self, channel_key, playlist_text, base_url, fetched_from_origin=True):
+        segments, target_duration, media_sequence = self._parse_playlist_segments(playlist_text, base_url)
+        with self.playlist_lock:
+            prev = self.playlist_state.get(channel_key)
+        req_count = prev['request_count'] if prev else 0
+        if fetched_from_origin:
+            req_count += 1
+        total_duration = sum(d for _, d in segments if d is not None)
+        min_interval = self._compute_min_interval(total_duration)
+        state = {
+            'content': playlist_text,
+            'base': base_url,
+            'segments': segments,
+            'target_duration': target_duration,
+            'total_duration': total_duration,
+            'media_sequence': media_sequence,
+            'last_fetch_ts': time.time(),
+            'request_count': req_count,
+            'min_interval': min_interval,
+        }
+        with self.playlist_lock:
+            self.playlist_state[channel_key] = state
+        return state
+
+    def get_playlist_state(self, channel_key, playlist_url, headers, fallback_url=None, force=False):
+        now = time.time()
+        with self.playlist_lock:
+            state = self.playlist_state.get(channel_key)
+        if state and not force:
+            elapsed = now - state['last_fetch_ts']
+            if elapsed < state.get('min_interval', MIN_PLAYLIST_INTERVAL_FLOOR):
+                return state, False
+        raw, final_url = self.fetch_playlist_raw(playlist_url, headers, fallback_url)
+        if raw is None:
+            return state, False
+        try:
+            playlist_text = raw.decode('utf-8', errors='ignore')
+        except Exception:
+            playlist_text = raw.decode('latin-1', errors='ignore')
+        base_url = (final_url or playlist_url).rsplit('/', 1)[0]
+        new_state = self._ingest_playlist_text(channel_key, playlist_text, base_url, fetched_from_origin=True)
+        return new_state, True
 
     def rewrite_m3u8_urls(self, playlist_content, base_url, proxy_host, headers=None, prefetch=True, channel_key=None, playlist_original_url=None):
         segment_urls = []
@@ -847,6 +938,22 @@ class UnifiedProxy:
         except Exception:
             pass
 
+    def _write_m3u8_response(self, write_fn, state, channel_key, playlist_original_url, headers):
+        proxy_host = "127.0.0.1:{}".format(get_active_port())
+        rewritten = self.rewrite_m3u8_urls(
+            state['content'], state['base'], proxy_host, headers,
+            channel_key=channel_key, playlist_original_url=playlist_original_url
+        )
+        body = rewritten.encode('utf-8')
+        write_fn(
+            b"HTTP/1.1 200 OK\r\n"
+            b"Content-Type: application/vnd.apple.mpegurl\r\n" +
+            "Content-Length: {}\r\n".format(len(body)).encode() +
+            b"Access-Control-Allow-Origin: *\r\n"
+            b"Cache-Control: no-cache\r\n\r\n" +
+            body
+        )
+
     def handle_channel_stream(self, url, headers, wfile, client_sock=None, method='GET', playlist_original_url=None):
         if method in ('HEAD', 'OPTIONS'):
             content_type = 'application/vnd.apple.mpegurl' if '.m3u8' in url.lower() else 'video/mp2t'
@@ -863,7 +970,7 @@ class UnifiedProxy:
 
         playlist_url = playlist_original_url if playlist_original_url else url
         playlist_headers = headers
-        channel_key = self.channel_key(url)
+        channel_key = self.channel_key(playlist_url)
 
         if not url.lower().endswith('.ts') and not playlist_original_url:
             self.original_playlist_urls[channel_key] = url
@@ -948,6 +1055,17 @@ class UnifiedProxy:
                 except Exception:
                     pass
 
+        if url.lower().endswith('.m3u8'):
+            state, _fetched = self.get_playlist_state(
+                channel_key, url, headers,
+                fallback_url=self.original_playlist_urls.get(channel_key)
+            )
+            if not state:
+                self._send_error(wfile, 503, "Playlist indisponivel")
+                return
+            self._write_m3u8_response(safe_write, state, channel_key, url, headers)
+            return
+
         response = None
         stream_slot_acquired = self.acquire_stream_slot()
         if not stream_slot_acquired:
@@ -976,23 +1094,10 @@ class UnifiedProxy:
                     try:
                         playlist_text = content.decode('utf-8', errors='ignore')
                         base_url = content_url.rsplit('/', 1)[0]
-                        segments = self._parse_playlist_segments(playlist_text, base_url)
-                        with self.playlist_lock:
-                            self.current_playlist_content = playlist_text
-                            self.current_playlist_base = base_url
-                            self.current_playlist_segments = segments
-                        proxy_host = "127.0.0.1:{}".format(get_active_port())
-                        rewritten = self.rewrite_m3u8_urls(playlist_text, self.current_playlist_base,
-                                                            proxy_host, headers,
-                                                            channel_key=channel_key,
-                                                            playlist_original_url=content_url)
+                        state = self._ingest_playlist_text(channel_key, playlist_text, base_url,
+                                                             fetched_from_origin=True)
                         response.close()
-                        safe_write(b"HTTP/1.1 200 OK\r\n"
-                                   b"Content-Type: application/vnd.apple.mpegurl\r\n" +
-                                   "Content-Length: {}\r\n".format(len(rewritten)).encode() +
-                                   b"Access-Control-Allow-Origin: *\r\n"
-                                   b"Cache-Control: no-cache\r\n\r\n" +
-                                   rewritten.encode('utf-8'))
+                        self._write_m3u8_response(safe_write, state, channel_key, content_url, headers)
                         return
                     except Exception:
                         return
