@@ -13,10 +13,10 @@ O add-on oferece um vasto catálogo de filmes e séries sob demanda, além de um
 
 ### 🔄 Como funciona a Lista IPTV
 
-Na primeira vez que você abrir o add-on, será solicitado que escolha sua **Lista IPTV** (entre as listas disponíveis). A partir daí, essa lista fica salva como a **lista ativa** e o menu principal passa a navegar direto dentro dela:
+Na primeira vez que você abrir o add-on, será solicitado que escolha sua **Lista IPTV** (entre as listas disponíveis). A partir daí, essa lista fica salva como a **lista ativa** e é usada apenas para a parte de **TV ao Vivo**:
 
 * **TV ao Vivo** → mostra direto as categorias de canais da sua lista (sem pedir para escolher a lista de novo)
-* **IMDB Filmes / IMDB Séries** → você pesquisa ou navega pelo catálogo do IMDB, e o add-on busca automaticamente o filme/episódio correspondente dentro da sua lista IPTV (por similaridade de título), sem depender de nenhuma API externa de VOD
+* **IMDB Filmes / IMDB Séries** → você pesquisa ou navega pelo catálogo do IMDB e assiste direto, sem depender da sua Lista IPTV
 * Para trocar de lista a qualquer momento, use a opção **Trocar Lista IPTV** no menu principal ou em Configurações
 
 > ✅ Recomendação: a melhor forma de instalar e manter o King IPTV sempre atualizado é através do Repositório OnePlay, que gerencia automaticamente dependências e novas versões.
@@ -61,16 +61,15 @@ Pronto! 🎉 O Kodi cuidará de todas as dependências automaticamente.
 
 > ⚠️ Este método não é recomendado para iniciantes.
 
-Caso prefira instalar manualmente, será necessário instalar as dependências abaixo **antes** do add-on King IPTV:
+Caso prefira instalar manualmente, será necessário instalar a dependência abaixo **antes** do add-on King IPTV:
 
-### Dependências (instalar nesta ordem)
+### Dependências
 
-- [script.module.netunblock](https://github.com/icarok99-alt/oneplayhd.github.io/raw/refs/heads/master/script.module.netunblock/script.module.netunblock-0.0.2.zip)
-- [script.module.flask](https://github.com/icarok99-alt/oneplayhd.github.io/raw/refs/heads/master/script.module.flask/script.module.flask-2.1.3.zip)
-- [plugin.video.f4mTester](https://github.com/icarok99-alt/oneplayhd.github.io/raw/refs/heads/master/plugin.video.f4mTester/plugin.video.f4mTester-4.2.5.zip)
-- [script.module.aws-solver](https://github.com/icarok99-alt/oneplayhd.github.io/raw/refs/heads/master/script.module.aws-solver/script.module.aws-solver-1.0.0.zip)
+Agora só precisa instalar:
 
-Após instalar todas as dependências, baixe e instale a versão mais recente do add-on:
+- [aws-solver](https://github.com/icarok99-alt/oneplayhd.github.io/raw/refs/heads/master/script.module.aws-solver/script.module.aws-solver-1.0.4.zip)
+
+Após instalar a dependência, baixe e instale a versão mais recente do add-on:
 
 [plugin.video.kingiptv](https://github.com/icarok99-alt/plugin.video.kingiptv/releases/latest)
 
