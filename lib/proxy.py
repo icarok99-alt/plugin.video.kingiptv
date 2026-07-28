@@ -640,8 +640,6 @@ class UnifiedProxy:
                 if expected_size and len(data) >= expected_size:
                     break
             if expected_size is not None and len(data) < expected_size * 0.9:
-                # Content-Length impreciso é comum em segmentos ao vivo ainda sendo
-                # escritos pela origem; só descartamos se vier bem incompleto.
                 return None, status
             if content_encoding == 'gzip':
                 data = gzip.decompress(data)
@@ -987,10 +985,6 @@ class UnifiedProxy:
                 self.prefetch_next_segments(url, headers, channel_key)
                 return
 
-            # Se um prefetch dessa mesma URL já está em andamento, aguarda em vez
-            # de disparar um segundo download concorrente para a origem (isso
-            # costuma acontecer justamente no primeiro segmento de um canal recém
-            # aberto, e a duplicidade pode fazer a origem derrubar uma das conexões).
             seg_key = self.segment_key(url)
             waited = 0.0
             while waited < 3.0:
@@ -1013,10 +1007,6 @@ class UnifiedProxy:
 
             segment_data = self.download_complete_segment(url, headers)
             if segment_data is None:
-                # Tenta a mesma URL de novo antes de forçar um refresh da playlist:
-                # como o canal é ao vivo, forçar o refresh agora quase garante que
-                # esse segmento já saiu da janela, e a "recuperação" acaba
-                # descartando justamente o primeiro segmento.
                 segment_data = self.download_complete_segment(url, headers)
             if segment_data is None:
                 refreshed_url = self.refresh_and_locate_segment(url, refresh_url, playlist_headers, channel_key)
