@@ -153,15 +153,14 @@ def build_play_item(stream, sub, title, iconimage, fanart, headers=None):
     stream_lower = stream.lower()
     is_hls = '.m3u8' in stream_lower or 'hls' in stream_lower
     is_mpd = '.mpd' in stream_lower
-    if is_hls or is_mpd:
-        if headers:
-            header_str = '&'.join('{}={}'.format(k, quote_plus(str(v))) for k, v in headers.items())
-            path = '{}|{}'.format(stream, header_str)
-        else:
-            path = stream
+    has_embedded_headers = '|' in stream
+    if has_embedded_headers:
+        path = stream
+    elif headers:
+        header_str = '&'.join('{}={}'.format(k, quote_plus(str(v))) for k, v in headers.items())
+        path = '{}|{}'.format(stream, header_str)
     else:
-        proxy_port = start_proxy_if_needed()
-        path = 'http://127.0.0.1:{}/?url={}'.format(proxy_port, quote_plus(stream))
+        path = stream
     play_item = xbmcgui.ListItem(label=title, path=path)
     play_item.setContentLookup(False)
     try:
@@ -180,12 +179,12 @@ def build_play_item(stream, sub, title, iconimage, fanart, headers=None):
     return play_item
 
 
-def resolve_movie_stream(imdb_number):
-    return api_vod.resolve_movie_stream(imdb_number)
+def resolve_movie_stream(title, original_title=None, year=None):
+    return api_vod.resolve_movie_stream(title, original_title, year)
 
 
-def resolve_series_episode_stream(imdb_number, season_num, episode_num):
-    return api_vod.resolve_episode_stream(imdb_number, season_num, episode_num)
+def resolve_series_episode_stream(title, season_num, episode_num, original_title=None):
+    return api_vod.resolve_episode_stream(title, season_num, episode_num, original_title)
 
 
 def open_settings():
@@ -456,12 +455,12 @@ def _series_entry(serie_name, image, url, description, imdb_id, original_name, y
 
 def _prepare_movie_play_item(movie_name, iconimage, fanart, imdb_number, description, year, original_name):
     try:
-        stream = resolve_movie_stream(imdb_number)
+        stream = resolve_movie_stream(movie_name, original_name, year)
         if not stream:
             notify('Stream Indisponível')
             return None
 
-        play_item = build_play_item(stream, None, movie_name, iconimage, fanart, headers=api_vod.PLAYER_HEADERS)
+        play_item = build_play_item(stream, None, movie_name, iconimage, fanart, headers=getattr(api_vod, 'HEADERS', None))
         info_tag = play_item.getVideoInfoTag()
         info_tag.setTitle(movie_name)
         info_tag.setPlot(description)
@@ -862,13 +861,13 @@ def play_resolve_series(param):
             else:
                 db.clear_resume_time(imdb_number, season_num, current_episode_num)
         try:
-            stream = resolve_series_episode_stream(imdb_number, season_num, current_episode_num)
+            stream = resolve_series_episode_stream(serie_name, season_num, current_episode_num, original_name)
             if not stream:
                 notify('Stream Indisponível')
                 xbmcplugin.setResolvedUrl(int(sys.argv[1]), False, xbmcgui.ListItem())
                 xbmc.PlayList(xbmc.PLAYLIST_VIDEO).clear()
                 return
-            play_item = build_play_item(stream, None, episode_title, iconimage, fanart, headers=api_vod.PLAYER_HEADERS)
+            play_item = build_play_item(stream, None, episode_title, iconimage, fanart, headers=getattr(api_vod, 'HEADERS', None))
             info_tag = play_item.getVideoInfoTag()
             info_tag.setTitle(episode_title)
             info_tag.setTvShowTitle(serie_name)
