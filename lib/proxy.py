@@ -639,7 +639,7 @@ class UnifiedProxy:
                 data += chunk
                 if expected_size and len(data) >= expected_size:
                     break
-            if expected_size is not None and len(data) < expected_size * 0.9:
+            if expected_size is not None and len(data) != expected_size:
                 return None, status
             if content_encoding == 'gzip':
                 data = gzip.decompress(data)
@@ -985,29 +985,7 @@ class UnifiedProxy:
                 self.prefetch_next_segments(url, headers, channel_key)
                 return
 
-            seg_key = self.segment_key(url)
-            waited = 0.0
-            while waited < 3.0:
-                with self.prefetching_lock:
-                    in_progress = seg_key in self.prefetching
-                if not in_progress:
-                    break
-                cached = self.get_cached_segment(url)
-                if cached:
-                    self._send_segment(wfile, cached)
-                    self.prefetch_next_segments(url, headers, channel_key)
-                    return
-                time.sleep(0.1)
-                waited += 0.1
-            cached = self.get_cached_segment(url)
-            if cached:
-                self._send_segment(wfile, cached)
-                self.prefetch_next_segments(url, headers, channel_key)
-                return
-
             segment_data = self.download_complete_segment(url, headers)
-            if segment_data is None:
-                segment_data = self.download_complete_segment(url, headers)
             if segment_data is None:
                 refreshed_url = self.refresh_and_locate_segment(url, refresh_url, playlist_headers, channel_key)
                 if refreshed_url != url:
