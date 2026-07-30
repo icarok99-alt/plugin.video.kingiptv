@@ -70,6 +70,35 @@ class Resolver:
         return stream
 
     @classmethod
+    def verify_stream(cls, url, headers, timeout=10):
+        """
+        Confere se a URL resolvida realmente entrega conteúdo de video,
+        em vez de assumir sucesso so porque a string foi montada.
+        Faz um GET parcial (Range) e valida status code + content-type + payload.
+        Retorna True/False.
+        """
+        if not url:
+            return False
+        try:
+            h = dict(headers)
+            h['Range'] = 'bytes=0-8191'
+            r = requests.get(url, headers=h, stream=True, timeout=timeout, allow_redirects=True)
+            try:
+                status_ok = r.status_code in (200, 206)
+                content_type = r.headers.get('Content-Type', '').lower()
+                # pagina de erro/html no lugar do video indica link morto
+                looks_like_html = 'text/html' in content_type
+                if not status_ok or looks_like_html:
+                    return False
+                # garante que existe payload de fato (evita resposta vazia)
+                chunk = next(r.iter_content(chunk_size=1024), b'')
+                return len(chunk) > 0
+            finally:
+                r.close()
+        except:
+            return False
+
+    @classmethod
     def dood_decode(cls, data):
         t = string.ascii_letters + string.digits
         return data + ''.join([random.choice(t) for _ in range(10)])
@@ -127,7 +156,8 @@ class Resolver:
                 else:
                     vid_src = cls.dood_decode(html) + token + str(int(time.time() * 1000))
                 headers.update({'Referer': web_url})
-                stream = vid_src + cls.append_headers(headers)
+                if cls.verify_stream(vid_src, headers):
+                    stream = vid_src + cls.append_headers(headers)
         except:
             pass
         return stream
@@ -171,7 +201,8 @@ class Resolver:
                     surl = 'https:' + surl
                 headers.pop('Origin', None)
                 headers.update({'Referer': url})
-                stream = surl + cls.append_headers(headers)
+                if cls.verify_stream(surl, headers):
+                    stream = surl + cls.append_headers(headers)
         except:
             pass
         return stream
@@ -216,10 +247,9 @@ class Resolver:
                 if src_url.startswith('//'):
                     src_url = 'https:' + src_url
                 last_stream = cls.last_url(src_url, headers=headers)
-                if last_stream:
-                    stream = last_stream + cls.append_headers(headers)
-                else:
-                    stream = src_url + cls.append_headers(headers)
+                candidate_url = last_stream or src_url
+                if cls.verify_stream(candidate_url, headers):
+                    stream = candidate_url + cls.append_headers(headers)
             else:
                 link_part1_re = re.compile(r'<div.+?style="display:none;">(.*?)&token=.+?</div>').findall(data)
                 link_part2_re = re.compile(r"&token=(.*?)'").findall(data)
@@ -239,10 +269,9 @@ class Resolver:
                         candidate = ''
                     if candidate:
                         last_stream = cls.last_url(candidate, headers=headers)
-                        if last_stream:
-                            stream = last_stream + cls.append_headers(headers)
-                        else:
-                            stream = candidate + cls.append_headers(headers)
+                        candidate_url = last_stream or candidate
+                        if cls.verify_stream(candidate_url, headers):
+                            stream = candidate_url + cls.append_headers(headers)
         except:
             pass
         return stream
