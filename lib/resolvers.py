@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+
 import re
 import random
 import string
@@ -71,12 +72,6 @@ class Resolver:
 
     @classmethod
     def verify_stream(cls, url, headers, timeout=10):
-        """
-        Confere se a URL resolvida realmente entrega conteúdo de video,
-        em vez de assumir sucesso so porque a string foi montada.
-        Faz um GET parcial (Range) e valida status code + content-type + payload.
-        Retorna True/False.
-        """
         if not url:
             return False
         try:
@@ -86,11 +81,9 @@ class Resolver:
             try:
                 status_ok = r.status_code in (200, 206)
                 content_type = r.headers.get('Content-Type', '').lower()
-                # pagina de erro/html no lugar do video indica link morto
                 looks_like_html = 'text/html' in content_type
                 if not status_ok or looks_like_html:
                     return False
-                # garante que existe payload de fato (evita resposta vazia)
                 chunk = next(r.iter_content(chunk_size=1024), b'')
                 return len(chunk) > 0
             finally:
