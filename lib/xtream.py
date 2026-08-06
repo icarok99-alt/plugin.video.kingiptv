@@ -12,7 +12,6 @@ from requests.packages.urllib3.util.retry import Retry
 from lib.helper import *
 import re
 import time
-import random
 from urllib.parse import urlparse, parse_qs
 
 IPTV_PROBLEM_LOG = translate(os.path.join(profile, 'iptv_problems_log.txt'))
@@ -25,34 +24,19 @@ EPG_INDEX_MEMORY = {}
 EPG_INDEX_LOCK = threading.Lock()
 EPG_ACTIVE = set()
 EPG_ACTIVE_LOCK = threading.Lock()
-USER_AGENTS = (
+USER_AGENT = (
     'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
-    'AppleWebKit/537.36 (KHTML, like Gecko) Chrome/132.0.0.0 Safari/537.36',
-    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
-    'AppleWebKit/537.36 (KHTML, like Gecko) Chrome/132.0.0.0 Safari/537.36 Edg/132.0.0.0',
-    'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:133.0) '
-    'Gecko/20100101 Firefox/133.0',
-    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) '
-    'AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.2 Safari/605.1.15',
-    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) '
-    'AppleWebKit/537.36 (KHTML, like Gecko) Chrome/132.0.0.0 Safari/537.36',
-    'Mozilla/5.0 (X11; Linux x86_64) '
-    'AppleWebKit/537.36 (KHTML, like Gecko) Chrome/132.0.0.0 Safari/537.36',
-    'Mozilla/5.0 (Linux; Android 14; SM-S928B) '
-    'AppleWebKit/537.36 (KHTML, like Gecko) Chrome/132.0.0.0 Mobile Safari/537.36',
-    'Mozilla/5.0 (SMART-TV; Linux; Tizen 7.0) '
-    'AppleWebKit/537.36 (KHTML, like Gecko) 85.0.4183.93/7.0 TV Safari/537.36',
+    'AppleWebKit/537.36 (KHTML, like Gecko) Chrome/132.0.0.0 Safari/537.36'
 )
 
 def get_user_agent():
-    return random.choice(USER_AGENTS)
+    return USER_AGENT
 
-def rotate_session_ua(session):
+def epg_download_enabled():
     try:
-        session.headers['User-Agent'] = get_user_agent()
+        return xbmcaddon.Addon().getSettingBool('download_epg')
     except Exception:
-        pass
-    return session
+        return False
 
 KINGIPTV_EPG_COLOR = 'gold'
 EPG_HEADER_COLOR = 'gold'
@@ -378,12 +362,30 @@ def extract_program_title(program):
              program.get('event') or program.get('event_name') or '')
     return decode_b64_safe(title).strip()
 
+# Alguns provedores geram o XMLTV a partir de um JSON interno e vazam o
+# restante da serialização dentro da tag <desc>, por exemplo:
+#   Exibição dos melhores momentos do Vai Que Cola."},"scheduledDate":"2026-08-06T03:25:00-03:00.
+# O texto real termina em "...Vai Que Cola." e o resto é lixo de JSON.
+# Esse regex detecta o ponto onde o JSON "vaza" (ex: `"},"campo":"valor`) e
+# corta o texto ali, e também apara aspas/pontuação soltas no fim.
+_EPG_DESC_JSON_LEAK_RE = re.compile(
+    r'["\']?\s*\}\s*,\s*"[A-Za-z_][A-Za-z0-9_]*"\s*:\s*.*$', re.DOTALL
+)
+
+def clean_epg_desc(text):
+    if not text:
+        return ''
+    cleaned = str(text)
+    cleaned = _EPG_DESC_JSON_LEAK_RE.sub('', cleaned)
+    cleaned = cleaned.strip().strip('"').strip()
+    return cleaned
+
 def extract_program_desc(program):
     if not isinstance(program, dict):
         return ''
     desc = (program.get('description') or program.get('desc') or
             program.get('plot') or '')
-    return decode_b64_safe(desc).strip()
+    return clean_epg_desc(decode_b64_safe(desc).strip())
 
 def normalize_epg_program(program):
     if not isinstance(program, dict):
@@ -571,6 +573,8 @@ def epg_index_fresh(dns, username, password):
     return True
 
 def download_epg_xml(dns, username, password):
+    if not epg_download_enabled():
+        return False
     paths = epg_paths(dns)
     urls = [
         '{}/xmltv.php?username={}&password={}'.format(dns, username, password),
@@ -720,7 +724,7 @@ def build_epg_index(dns, username, password, channel_ids=None):
                 except Exception:
                     pass
                 continue
-            desc = xml_child_text(elem, 'desc')
+            desc = clean_epg_desc(xml_child_text(elem, 'desc'))
             if cid not in touched_this_build:
                 touched_this_build.add(cid)
                 channels[cid] = []
@@ -815,6 +819,8 @@ def epg_channels_covered(dns, username, password, channel_ids):
 
 
 def build_epg_for_channels(dns, username, password, channel_ids):
+    if not epg_download_enabled():
+        return
     wanted = {normalize_epg_channel_id(c) for c in channel_ids if c}
     if not wanted:
         return
@@ -831,7 +837,22 @@ def build_epg_for_channels(dns, username, password, channel_ids):
         log_iptv_problem(dns, f'Erro EPG síncrono: {e}')
 
 
+def kick_epg_background(dns, username, password):
+    clear_account_offline(dns, username, password)
+    if not epg_download_enabled():
+        return
+    def worker():
+        try:
+            ensure_epg_xml_background(dns, username, password)
+        except Exception:
+            pass
+    t = threading.Thread(target=worker)
+    t.daemon = True
+    t.start()
+
 def ensure_epg_xml_background(dns, username, password):
+    if not epg_download_enabled():
+        return
     if epg_xml_fresh(dns, username, password):
         return
     if is_account_marked_offline(dns, username, password):
@@ -855,6 +876,8 @@ def ensure_epg_xml_background(dns, username, password):
 
 
 def ensure_epg_background(dns, username, password, channel_ids=None):
+    if not epg_download_enabled():
+        return
     if channel_ids is None:
         ensure_epg_xml_background(dns, username, password)
         return
@@ -965,7 +988,6 @@ def parselist(url):
     iptv = []
     session = create_session()
     try:
-        rotate_session_ua(session)
         response = session.get(url, timeout=REQUEST_TIMEOUT)
         url = response.json()['url']
     except Exception:
@@ -975,7 +997,6 @@ def parselist(url):
             try:
                 key = url.split('/')[-1]
                 url = 'https://paste.kodi.tv/documents/' + key
-                rotate_session_ua(session)
                 src = session.get(url, timeout=REQUEST_TIMEOUT).json()['data']
                 for i in src.split('\n'):
                     i = i.replace(' ', '')
@@ -986,7 +1007,6 @@ def parselist(url):
             except Exception as e:
                 log_iptv_problem(url, 'Erro paste.kodi.tv: {}'.format(e))
         else:
-            rotate_session_ua(session)
             src = session.get(url, timeout=REQUEST_TIMEOUT).text
             for i in src.split('\n'):
                 i = i.replace(' ', '')
@@ -1031,7 +1051,6 @@ class API:
         return not self.is_adult(name)
     def http(self, url='', mode=None):
         try:
-            rotate_session_ua(self.session)
             if not mode:
                 r = self.session.get(url, timeout=REQUEST_TIMEOUT)
                 if r.status_code != 200:
@@ -1078,6 +1097,7 @@ class API:
                     'data': itens,
                     'timestamp': time.time()
                 }
+        ensure_epg_xml_background(self.dns, self.username, self.password)
         return itens
     def channels_open_epg(self, url):
         result = []
@@ -1127,6 +1147,9 @@ class API:
 
         if filtered:
             filtered = sorted(filtered, key=lambda x: x['name'].lower())
+        category_epg_ids = [c.get('epg_channel_id') for c in filtered if c.get('epg_channel_id')]
+        if category_epg_ids:
+            build_epg_for_channels(self.dns, self.username, self.password, category_epg_ids)
         return filtered
     def series_cat(self):
         itens = []

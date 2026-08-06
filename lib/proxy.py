@@ -2,25 +2,23 @@
 
 import socket
 import threading
-import struct
 import random
 import time
 import os
 import re
-from urllib.parse import urlparse, unquote, urljoin, quote, parse_qs
+from collections import deque
+from urllib.parse import urlparse, unquote, urljoin, parse_qs, urlsplit
 from urllib.request import Request, urlopen
 from urllib.error import HTTPError
 import ssl
-from collections import deque
 import gzip
 import zlib
 import socketserver
 import http.client
-from urllib.parse import urlsplit
-
+import concurrent.futures
 try:
     import xbmcvfs
-except Exception:
+except ImportError:
     xbmcvfs = None
 
 PROXY_PORT_POOL = [57845, 57846, 57847, 57848, 57849, 57850]
@@ -88,77 +86,84 @@ def is_port_free(port, host="127.0.0.1"):
         except Exception:
             pass
 
-CACHE_DURATION_SECONDS = 5
-CACHE_MAX_CHUNKS = 250
 MAX_RETRIES = 3
-MAX_RECONNECT_RETRIES = 2
 RETRY_DELAY = 0.3
-BUFFER_SIZE = 32768
-MAX_EOF_RECONNECTS = 3
-MAX_TOTAL_RECONNECTS = 5
-MAX_STALL_SECONDS = 10
-CLIENT_ALIVE_CHECK_EVERY = 1.0
+BUFFER_SIZE = 65536
+
+SEGMENT_INLINE_RETRIES = 3
+SEGMENT_INLINE_RETRY_DELAY = 0.3
+
+PLAYLIST_FETCH_TIMEOUT = 10
+SEGMENT_FETCH_TIMEOUT = 15
+
+DEFAULT_SEGMENT_DURATION = 6.0
+MIN_REFRESH_INTERVAL = 2.0
+MAX_WAIT_FOR_NEW_SEGMENTS = 1.0
+SERVED_IDS_MAX = 400
+TRICKLE_INTERVAL_TARGET = 0.1
+TRICKLE_MIN_TS_PACKETS = 8
+BUFFER_AHEAD_SECONDS = 6.0
+
+REFRESH_LEAD_TIME = 5.0
+
 MAX_ACTIVE_CHANNEL_STREAMS = 12
-CACHE_ENTRY_TTL = 300
+MAX_CONCURRENT_HANDLERS = 20
+CHANNEL_STATE_TTL = 300
 CACHE_CLEANUP_INTERVAL = 60
-PREFETCH_SEGMENT_COUNT = 1
-SEGMENT_CACHE_TTL = 300
-SEGMENT_CACHE_MAX = 20
 SOCKET_IDLE_TIMEOUT = 10
 SOCKET_STREAM_TIMEOUT = 10
-PREFETCH_TIMEOUT = 8
-PREFETCH_MAX_RETRIES = 2
-MAX_PREFETCH_THREADS = 2
-MAX_CONCURRENT_HANDLERS = 40
-CHANNEL_IDLE_ABORT_SECONDS = 10
-PLAYLIST_REFRESH_INTERVAL = 600
 
 EXTINF_RE = re.compile(r'#EXTINF:\s*([\d.]+)')
 TARGETDURATION_RE = re.compile(r'#EXT-X-TARGETDURATION:\s*(\d+(?:\.\d+)?)')
 MEDIA_SEQUENCE_RE = re.compile(r'#EXT-X-MEDIA-SEQUENCE:\s*(\d+)')
-MIN_PLAYLIST_INTERVAL_FLOOR = 2.0
 
-PLAYLIST_REFRESH_BY_TARGET = {
-    15: 10.0,
-    20: 13.3,
-    25: 16.7,
-    30: 20.0,
-    35: 23.3,
-    40: 26.7,
-    45: 30.0,
-    50: 33.3,
-    55: 36.7,
-    60: 40.0,
+
+AUTH_ERROR_CODES = {401, 403}
+NOT_FOUND_CODES = {404, 410}
+BLOCKED_CODES = {451}
+RATE_LIMIT_CODES = {429}
+SERVER_ERROR_CODES = {500, 502, 503, 504}
+NON_RETRYABLE_CODES = AUTH_ERROR_CODES | NOT_FOUND_CODES | BLOCKED_CODES
+MAX_CONSECUTIVE_AUTH_FAILURES = 2
+
+
+def classify_status(status):
+    if status is None:
+        return 'network'
+    if status in AUTH_ERROR_CODES:
+        return 'auth'
+    if status in NOT_FOUND_CODES:
+        return 'not_found'
+    if status in BLOCKED_CODES:
+        return 'blocked'
+    if status in RATE_LIMIT_CODES:
+        return 'rate_limit'
+    if status in SERVER_ERROR_CODES:
+        return 'server_error'
+    if status in (200, 206):
+        return 'ok'
+    return 'unknown'
+
+
+ERROR_KIND_TO_CLIENT_STATUS = {
+    'auth': 401,
+    'not_found': 404,
+    'blocked': 451,
+    'rate_limit': 429,
+    'server_error': 503,
+    'network': 503,
+    'timeout': 503,
+    'unknown': 503,
 }
-PLAYLIST_REFRESH_TOLERANCE = 1.0
-PLAYLIST_REFRESH_RATIO_DEFAULT = 2.0 / 3.0
-
-AUTH_ERROR_CODES = {401, 403, 404, 410, 451}
-
-CHROME_UA = (
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-    "AppleWebKit/537.36 (KHTML, like Gecko) "
-    "Chrome/150.0.7871.114 Safari/537.36"
-)
 
 UA_POOL = [
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.7871.114 Safari/537.36",
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.7827.200 Safari/537.36",
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.7692.100 Safari/537.36",
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.7549.90 Safari/537.36",
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.7391.85 Safari/537.36",
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.7871.114 Safari/537.36",
     "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.7827.200 Safari/537.36",
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:152.0) Gecko/20100101 Firefox/152.0",
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:150.0) Gecko/20100101 Firefox/150.0",
-    "Mozilla/5.0 (X11; Linux x86_64; rv:152.0) Gecko/20100101 Firefox/152.0",
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.7871.114 Safari/537.36 Edg/150.0.3593.56",
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.7759.62 Safari/537.36 Edg/148.0.3479.40",
     "Mozilla/5.0 (Linux; Android 15; Pixel 9) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.7871.114 Mobile Safari/537.36",
-    "Mozilla/5.0 (Linux; Android 14; SM-S928B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.7759.62 Mobile Safari/537.36",
     "Mozilla/5.0 (iPhone; CPU iPhone OS 18_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.5 Mobile/15E148 Safari/604.1",
-    "Mozilla/5.0 (iPhone; CPU iPhone OS 18_3 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.3 Mobile/15E148 Safari/604.1",
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.5 Safari/605.1.15",
 ]
 
 def get_origin(url):
@@ -170,241 +175,107 @@ def get_origin(url):
         pass
     return ''
 
-class SimpleDNS:
-    def __init__(self):
-        self.cache = {}
-        self.cache_lock = threading.Lock()
-        self.dns_servers = [
-            ("1.1.1.1", 53),
-            ("8.8.8.8", 53),
-            ("208.67.222.222", 53),
-            ("9.9.9.9", 53),
-        ]
-        self.original_getaddrinfo = socket.getaddrinfo
-        socket.getaddrinfo = self.resolver
-        self.timeout = 5.0
-        self.max_retries = 2
+class ConnectionPool:
+    def __init__(self, ssl_context, timeout=15):
+        self.ssl_context = ssl_context
+        self.timeout = timeout
+        self._lock = threading.Lock()
+        self._conns = {}
 
-    def build_query(self, domain, qtype=1):
-        transaction_id = random.randint(0, 65535)
-        header = struct.pack(">HHHHHH", transaction_id, 0x0100, 1, 0, 0, 0)
-        qname = b"".join(
-            bytes([len(part)]) + part.encode() for part in domain.split(".")
-        ) + b"\x00"
-        return header + qname + struct.pack(">HH", qtype, 1)
+    @staticmethod
+    def _key(parsed):
+        port = parsed.port or (443 if parsed.scheme == 'https' else 80)
+        return (parsed.scheme, parsed.hostname, port)
 
-    def parse_response(self, data):
+    def _new_conn(self, parsed, timeout):
+        if parsed.scheme == 'https':
+            return http.client.HTTPSConnection(
+                parsed.hostname, parsed.port, timeout=timeout, context=self.ssl_context
+            )
+        return http.client.HTTPConnection(parsed.hostname, parsed.port, timeout=timeout)
+
+    def request(self, url, method='GET', headers=None, timeout=None, max_redirects=5):
+        timeout = timeout or self.timeout
+        current_url = url
+        headers = dict(headers or {})
+        headers['Connection'] = 'keep-alive'
+        for _ in range(max_redirects + 1):
+            parsed = urlsplit(current_url)
+            key = self._key(parsed)
+            path = (parsed.path or '/') + (('?' + parsed.query) if parsed.query else '')
+            
+            with self._lock:
+                conn = self._conns.pop(key, None)
+                
+            for attempt in range(2):
+                if conn is None:
+                    conn = self._new_conn(parsed, timeout)
+                try:
+                    conn.timeout = timeout
+                    conn.request(method, path, headers=headers)
+                    resp = conn.getresponse()
+                    body = resp.read()
+                    status = resp.status
+                    resp_headers = {k.lower(): v for k, v in resp.getheaders()}
+                    
+                    if resp_headers.get('connection', '').lower() != 'close':
+                        with self._lock:
+                            self._conns[key] = conn
+                    else:
+                        try:
+                            conn.close()
+                        except Exception:
+                            pass
+
+                    if status in (301, 302, 303, 307, 308) and 'location' in resp_headers:
+                        current_url = urljoin(current_url, resp_headers['location'])
+                        break
+                    return status, resp_headers, body, current_url
+                except Exception:
+                    try:
+                        conn.close()
+                    except Exception:
+                        pass
+                    conn = None
+                    if attempt == 1:
+                        raise
+            else:
+                continue
+        raise ConnectionError("Excesso de redirecionamentos para {}".format(url))
+
+    def discard(self, url):
         try:
-            flags = struct.unpack(">H", data[2:4])[0]
-            if (flags & 0x000F) != 0:
-                return None, None
-            answer_count = struct.unpack(">H", data[6:8])[0]
-            if answer_count == 0:
-                return None, None
-            offset = 12
-            while data[offset] != 0:
-                offset += 1
-            offset += 5
-            ips = []
-            ttl = 3600
-            for _ in range(answer_count):
-                if data[offset] & 0xC0:
-                    offset += 2
-                else:
-                    while data[offset] != 0:
-                        offset += 1
-                    offset += 1
-                rtype, rclass, ttl, rdlength = struct.unpack(">HHIH", data[offset:offset+10])
-                offset += 10
-                if rtype == 1 and rdlength == 4:
-                    ip = struct.unpack(">BBBB", data[offset:offset+4])
-                    ips.append(".".join(map(str, ip)))
-                elif rtype == 28 and rdlength == 16:
-                    ip = struct.unpack(">16B", data[offset:offset+16])
-                    ips.append(":".join("{:02x}{:02x}".format(ip[i], ip[i+1]) for i in range(0, 16, 2)))
-                offset += rdlength
-            if ips:
-                return ips, ttl
+            parsed = urlsplit(url)
+            key = self._key(parsed)
+            with self._lock:
+                conn = self._conns.pop(key, None)
+            if conn is not None:
+                conn.close()
         except Exception:
             pass
-        return None, None
 
-    def resolve_udp(self, domain):
-        for server, port in self.dns_servers:
-            for attempt in range(self.max_retries):
-                try:
-                    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-                    sock.settimeout(self.timeout)
-                    query = self.build_query(domain)
-                    sock.sendto(query, (server, port))
-                    data, _ = sock.recvfrom(2048)
-                    sock.close()
-                    ips, ttl = self.parse_response(data)
-                    if ips:
-                        return ips, ttl
-                except Exception:
-                    continue
-        return None, None
-
-    def resolve_tcp(self, domain):
-        for server, port in self.dns_servers:
-            try:
-                sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                sock.settimeout(self.timeout + 1)
-                sock.connect((server, port))
-                query = self.build_query(domain)
-                sock.send(struct.pack(">H", len(query)) + query)
-                resp_len_data = sock.recv(2)
-                if len(resp_len_data) != 2:
-                    sock.close()
-                    continue
-                resp_len = struct.unpack(">H", resp_len_data)[0]
-                data = b""
-                while len(data) < resp_len:
-                    chunk = sock.recv(min(4096, resp_len - len(data)))
-                    if not chunk:
-                        break
-                    data += chunk
-                sock.close()
-                if len(data) == resp_len:
-                    ips, ttl = self.parse_response(data)
-                    if ips:
-                        return ips, ttl
-            except Exception:
-                continue
-        return None, None
-
-    def resolve(self, domain):
-        if not domain or domain == '':
-            return None
-        with self.cache_lock:
-            if domain in self.cache:
-                entry = self.cache[domain]
-                if entry["expires"] > time.time():
-                    return entry["ips"]
-                else:
-                    del self.cache[domain]
-
-        ips, ttl = self.resolve_udp(domain)
-        if not ips:
-            ips, ttl = self.resolve_tcp(domain)
-
-        if ips:
-            with self.cache_lock:
-                self.cache[domain] = {
-                    "ips": ips,
-                    "expires": time.time() + (ttl if ttl else 3600)
-                }
-            return ips
-        return None
-
-    def resolver(self, host, port, *args, **kwargs):
-        try:
-            socket.inet_aton(host)
-            return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", (host, port))]
-        except Exception:
-            ips = self.resolve(host)
-            if ips:
-                results = []
-                for ip in ips:
-                    try:
-                        socket.inet_aton(ip)
-                        results.append((socket.AF_INET, socket.SOCK_STREAM, 6, "", (ip, port)))
-                    except Exception:
-                        try:
-                            socket.inet_pton(socket.AF_INET6, ip)
-                            results.append((socket.AF_INET6, socket.SOCK_STREAM, 6, "", (ip, port)))
-                        except Exception:
-                            continue
-                if results:
-                    return results
-        return self.original_getaddrinfo(host, port, *args, **kwargs)
-
-dns = SimpleDNS()
-
-class CircularBuffer:
-    def __init__(self, max_seconds=5, max_chunks=250):
-        self.buffer = deque(maxlen=max_chunks)
-        self.timestamps = deque(maxlen=max_chunks)
-        self.max_seconds = max_seconds
-        self.total_bytes = 0
-        self.lock = threading.Lock()
-        self.last_update = 0
-        self.stream_started = False
-
-    def add_chunk(self, chunk):
-        with self.lock:
-            self.buffer.append(chunk)
-            self.timestamps.append(time.time())
-            self.total_bytes += len(chunk)
-            self.last_update = time.time()
-            cutoff = time.time() - self.max_seconds
-            while self.timestamps and self.timestamps[0] < cutoff:
-                removed = self.buffer.popleft()
-                self.timestamps.popleft()
-                self.total_bytes -= len(removed)
-
-    def get_recovery_chunks(self, duration=3):
-        with self.lock:
-            if not self.buffer:
-                return []
-            cutoff = time.time() - duration
-            recovery = []
-            for i, ts in enumerate(self.timestamps):
-                if ts >= cutoff:
-                    recovery.append(self.buffer[i])
-            if not recovery and self.buffer:
-                recovery = list(self.buffer)[-20:]
-            return recovery
-
-    def get_continuous_chunks(self, count=30):
-        with self.lock:
-            if not self.buffer:
-                return []
-            return list(self.buffer)[-count:]
-
-    def clear(self):
-        with self.lock:
-            self.buffer.clear()
-            self.timestamps.clear()
-            self.total_bytes = 0
-            self.stream_started = False
 
 class UnifiedProxy:
     def __init__(self):
-        self.channel_caches = {}
         self.ssl_context = ssl.create_default_context()
         self.ssl_context.check_hostname = False
         self.ssl_context.verify_mode = ssl.CERT_NONE
-        self.stream_lock = threading.Lock()
-        self.cache_lock = threading.Lock()
-        self.segment_cache = {}
-        self.segment_cache_lock = threading.Lock()
-        self.prefetching = set()
-        self.prefetching_lock = threading.Lock()
-        self.active_streams = 0
-        self.active_streams_lock = threading.Lock()
-        self.channel_cache_last_used = {}
-        self.maintenance_started = False
-        self.maintenance_lock = threading.Lock()
-        self.channel_warmed_up = set()
-        self.warmup_lock = threading.Lock()
-        self.prefetch_threads_active = 0
-        self.prefetch_threads_lock = threading.Lock()
-        self.active_handlers = 0
-        self.active_handlers_lock = threading.Lock()
+        self.conn_pool = ConnectionPool(self.ssl_context)
+
         self.channel_ua_cache = {}
         self.channel_ua_lock = threading.Lock()
-        self.original_playlist_urls = {}
+
         self.playlist_lock = threading.Lock()
         self.playlist_state = {}
+        self.channel_last_active = {}
 
-    def get_user_agent_for_channel(self, channel_url):
-        key = self.channel_key(channel_url)
-        with self.channel_ua_lock:
-            if key not in self.channel_ua_cache:
-                self.channel_ua_cache[key] = random.choice(UA_POOL)
-            return self.channel_ua_cache[key]
+        self.active_streams = 0
+        self.active_streams_lock = threading.Lock()
+        self.active_handlers = 0
+        self.active_handlers_lock = threading.Lock()
+
+        self.maintenance_started = False
+        self.maintenance_lock = threading.Lock()
 
     def start_maintenance(self):
         with self.maintenance_lock:
@@ -419,15 +290,14 @@ class UnifiedProxy:
             time.sleep(CACHE_CLEANUP_INTERVAL)
             now = time.time()
             try:
-                with self.stream_lock:
-                    stale = [k for k, ts in self.channel_cache_last_used.items()
-                             if now - ts > CACHE_ENTRY_TTL]
-                    for k in stale:
-                        self.channel_caches.pop(k, None)
-                        self.channel_cache_last_used.pop(k, None)
-                with self.warmup_lock:
-                    for k in stale:
-                        self.channel_warmed_up.discard(k)
+                stale = [k for k, ts in self.channel_last_active.items()
+                         if now - ts > CHANNEL_STATE_TTL]
+                for k in stale:
+                    self.channel_last_active.pop(k, None)
+                    with self.playlist_lock:
+                        self.playlist_state.pop(k, None)
+                    with self.channel_ua_lock:
+                        self.channel_ua_cache.pop(k, None)
             except Exception:
                 pass
 
@@ -454,322 +324,98 @@ class UnifiedProxy:
             if self.active_streams > 0:
                 self.active_streams -= 1
 
-    def get_random_user_agent(self):
-        return random.choice(UA_POOL)
-
-    def get_local_ip(self):
-        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        try:
-            s.connect(("8.8.8.8", 80))
-            ip = s.getsockname()[0]
-        except Exception:
-            ip = "127.0.0.1"
-        finally:
-            s.close()
-        return ip
-
-    def extract_url_from_path(self, path):
-        result = {'url': None, 'playlist_url': None}
-        if '/?url=' in path:
-            query_part = path.split('/?', 1)[1]
-            params = parse_qs(query_part)
-            url_list = params.get('url', [])
-            if url_list:
-                result['url'] = unquote(url_list[0])
-            playlist_list = params.get('playlist_url', [])
-            if playlist_list:
-                result['playlist_url'] = unquote(playlist_list[0])
-            return result
-        if '/tsdownloader' in path and '?url=' in path:
-            params = path.split('?', 1)[1]
-            for param in params.split('&'):
-                if param.startswith('url='):
-                    result['url'] = unquote(param[4:])
-                elif param.startswith('playlist_url='):
-                    result['playlist_url'] = unquote(param[13:])
-            return result
-        if path.startswith('/http://') or path.startswith('/https://'):
-            result['url'] = unquote(path[1:])
-            return result
-        if path.startswith('http://') or path.startswith('https://'):
-            result['url'] = unquote(path)
-            return result
-        return result
-
     def channel_key(self, url):
         return re.sub(r'(_=\d+|timestamp=\d+|t=\d+|seq=\d+)', '', url)
 
-    def get_channel_cache(self, url):
-        clean_url = self.channel_key(url)
-        with self.stream_lock:
-            if clean_url not in self.channel_caches:
-                self.channel_caches[clean_url] = CircularBuffer(CACHE_DURATION_SECONDS, CACHE_MAX_CHUNKS)
-            self.channel_cache_last_used[clean_url] = time.time()
-            return self.channel_caches[clean_url]
+    def get_user_agent_for_channel(self, url):
+        key = self.channel_key(url)
+        with self.channel_ua_lock:
+            if key not in self.channel_ua_cache:
+                self.channel_ua_cache[key] = random.choice(UA_POOL)
+            return self.channel_ua_cache[key]
 
-    def fetch_channel_with_fallback(self, url, headers=None, range_header=None, cache=None,
-                                     is_alive=None, max_retries=None, timeout=15):
-        if headers is None:
-            headers = {}
-        retries = max_retries if max_retries is not None else MAX_RETRIES
+    def extract_url_from_path(self, path):
+        if path.startswith('/http://') or path.startswith('/https://'):
+            return unquote(path[1:])
+        if path.startswith('http://') or path.startswith('https://'):
+            return unquote(path)
+        if '?' in path:
+            query_part = path.split('?', 1)[1]
+            params = parse_qs(query_part)
+            url_list = params.get('url', [])
+            if url_list:
+                return unquote(url_list[0])
+        return None
+
+    def _fetch_url(self, url, headers=None, timeout=10, max_retries=MAX_RETRIES, is_alive=None):
         fixed_ua = self.get_user_agent_for_channel(url)
-        for attempt in range(retries):
+        last_status = None
+        last_kind = 'network'
+        for attempt in range(max_retries):
             if is_alive is not None and not is_alive():
-                return None, 0, None
-            user_agent = fixed_ua if attempt == 0 else self.get_random_user_agent()
+                return None, None, None, 'aborted'
+            ua = fixed_ua if attempt == 0 else random.choice(UA_POOL)
             origin = get_origin(url)
             req_headers = {
-                'User-Agent': user_agent,
+                'User-Agent': ua,
                 'Accept': '*/*',
                 'Accept-Language': 'pt-BR,pt;q=0.9',
-                'Connection': 'keep-alive'
             }
             if origin:
                 req_headers['Origin'] = origin
                 req_headers['Referer'] = origin + '/'
-            for key, value in headers.items():
-                if key.lower() not in ['host', 'connection', 'content-length', 'range', 'user-agent', 'accept-encoding']:
-                    req_headers[key] = value
-            if range_header:
-                req_headers['Range'] = range_header
+            for k, v in (headers or {}).items():
+                if k.lower() not in ('host', 'connection', 'content-length', 'range',
+                                     'user-agent', 'accept-encoding'):
+                    req_headers[k] = v
             try:
-                req = Request(url, headers=req_headers)
-                if url.startswith('https'):
-                    response = urlopen(req, timeout=timeout, context=self.ssl_context)
-                else:
-                    response = urlopen(req, timeout=timeout)
-                status_code = response.getcode()
-                content_encoding = response.headers.get('content-encoding', '').lower()
-                if status_code not in [200, 206]:
-                    return None, status_code, None
+                status, resp_headers, data, final_url = self.conn_pool.request(
+                    url, method='GET', headers=req_headers, timeout=timeout
+                )
+                if status not in (200, 206):
+                    kind = classify_status(status)
+                    last_status, last_kind = status, kind
+                    if kind in ('auth', 'not_found', 'blocked') or attempt >= max_retries - 1:
+                        return None, None, status, kind
+                    delay = RETRY_DELAY * (attempt + 1)
+                    if kind == 'rate_limit':
+                        delay *= 2
+                    time.sleep(delay)
+                    continue
+                encoding = resp_headers.get('content-encoding', '').lower()
                 try:
-                    if hasattr(response.fp, '_sock') and response.fp._sock:
-                        response.fp._sock.settimeout(10)
+                    if encoding == 'gzip':
+                        data = gzip.decompress(data)
+                    elif encoding == 'deflate':
+                        data = zlib.decompress(data)
                 except Exception:
                     pass
-                return response, status_code, content_encoding
-            except HTTPError as e:
-                if e.code in AUTH_ERROR_CODES:
-                    return None, e.code, None
-                if attempt < retries - 1:
-                    if is_alive is not None and not is_alive():
-                        return None, 0, None
-                    time.sleep(RETRY_DELAY * (attempt + 1))
-                    continue
-                return None, e.code, None
+                return data, final_url, status, 'ok'
+            except (socket.timeout, TimeoutError):
+                last_kind = 'timeout'
+                self.conn_pool.discard(url)
+                if attempt >= max_retries - 1:
+                    return None, None, None, 'timeout'
+                time.sleep(RETRY_DELAY * (attempt + 1))
             except Exception:
-                if attempt < retries - 1:
-                    if is_alive is not None and not is_alive():
-                        return None, 0, None
-                    time.sleep(RETRY_DELAY * (attempt + 1))
-                    continue
-                return None, 0, None
-        return None, 0, None
+                last_kind = 'network'
+                self.conn_pool.discard(url)
+                if attempt >= max_retries - 1:
+                    return None, None, None, 'network'
+                time.sleep(RETRY_DELAY * (attempt + 1))
+        return None, None, last_status, last_kind
 
-    def reconnect_stream(self, url, headers, cache, is_alive, channel_key, refresh_url, playlist_headers):
-        if refresh_url:
-            seg = self.refresh_and_locate_segment(url, refresh_url, playlist_headers, channel_key)
-            if seg != url:
-                response, status, _ = self.fetch_channel_with_fallback(
-                    seg, headers, None, cache, is_alive=is_alive, max_retries=MAX_RECONNECT_RETRIES
-                )
-                if response and status in (200, 206):
-                    return response, status, seg
-        response, status, _ = self.fetch_channel_with_fallback(
-            url, headers, None, cache, is_alive=is_alive, max_retries=MAX_RECONNECT_RETRIES
+    def download_segment(self, url, headers):
+        data, _final_url, _status, kind = self._fetch_url(
+            url, headers, timeout=SEGMENT_FETCH_TIMEOUT, max_retries=MAX_RETRIES
         )
-        if response and status in (200, 206):
-            return response, status, url
-        return None, 0, url
+        if not data:
+            return None, kind
+        if len(data) < 188 or data[0] != 0x47:
+            return None, 'corrupt'
+        return data, 'ok'
 
-    def segment_key(self, url):
-        try:
-            parts = urlsplit(url)
-            return "{}://{}{}?{}".format(parts.scheme, parts.netloc, parts.path, parts.query)
-        except Exception:
-            return url
-
-    def get_cached_segment(self, url):
-        key = self.segment_key(url)
-        with self.segment_cache_lock:
-            entry = self.segment_cache.get(key)
-            if not entry:
-                return None
-            data, ts = entry
-            if time.time() - ts > SEGMENT_CACHE_TTL:
-                del self.segment_cache[key]
-                return None
-            if len(data) >= 188 and data[0] == 0x47:
-                return data
-            del self.segment_cache[key]
-            return None
-
-    def store_segment(self, url, data):
-        if not data or len(data) < 188 or data[0] != 0x47:
-            return
-        key = self.segment_key(url)
-        with self.segment_cache_lock:
-            self.segment_cache[key] = (data, time.time())
-            if len(self.segment_cache) > SEGMENT_CACHE_MAX:
-                oldest_key = min(self.segment_cache, key=lambda k: self.segment_cache[k][1])
-                if oldest_key != key:
-                    del self.segment_cache[oldest_key]
-
-    def _fetch_segment_bytes(self, url, headers, timeout, max_retries):
-        response = None
-        try:
-            response, status, content_encoding = self.fetch_channel_with_fallback(
-                url, headers, max_retries=max_retries, timeout=timeout
-            )
-            if not response or status not in (200, 206):
-                return None, status
-            content_length = response.headers.get('content-length')
-            try:
-                expected_size = int(content_length) if content_length else None
-            except Exception:
-                expected_size = None
-            data = b""
-            deadline = time.time() + timeout
-            while True:
-                if time.time() > deadline:
-                    return None, status
-                chunk = response.read(BUFFER_SIZE)
-                if not chunk:
-                    break
-                data += chunk
-                if expected_size and len(data) >= expected_size:
-                    break
-            if expected_size is not None and len(data) != expected_size:
-                return None, status
-            if content_encoding == 'gzip':
-                data = gzip.decompress(data)
-            elif content_encoding == 'deflate':
-                data = zlib.decompress(data)
-            if len(data) < 188 or data[0] != 0x47:
-                return None, status
-            return data, status
-        except Exception:
-            return None, 0
-        finally:
-            if response is not None:
-                try:
-                    response.close()
-                except Exception:
-                    pass
-
-    def download_complete_segment(self, url, headers, timeout=20):
-        data, _ = self._fetch_segment_bytes(url, headers, timeout=timeout, max_retries=MAX_RETRIES)
-        return data
-
-    def download_segment_to_cache(self, url, headers):
-        try:
-            data, _ = self._fetch_segment_bytes(
-                url, headers, timeout=PREFETCH_TIMEOUT, max_retries=PREFETCH_MAX_RETRIES
-            )
-            if data:
-                self.store_segment(url, data)
-        finally:
-            with self.prefetching_lock:
-                self.prefetching.discard(self.segment_key(url))
-            with self.prefetch_threads_lock:
-                if self.prefetch_threads_active > 0:
-                    self.prefetch_threads_active -= 1
-
-    def prefetch_segments(self, urls, headers, channel_key=None):
-        to_fetch = []
-        for seg_url in urls[:PREFETCH_SEGMENT_COUNT]:
-            key = self.segment_key(seg_url)
-            with self.prefetching_lock:
-                if self.get_cached_segment(seg_url):
-                    continue
-                if key in self.prefetching:
-                    continue
-                self.prefetching.add(key)
-            to_fetch.append(seg_url)
-        if not to_fetch:
-            return []
-        with self.prefetch_threads_lock:
-            if self.prefetch_threads_active >= MAX_PREFETCH_THREADS:
-                with self.prefetching_lock:
-                    for seg_url in to_fetch:
-                        self.prefetching.discard(self.segment_key(seg_url))
-                return []
-            self.prefetch_threads_active += 1
-        t = threading.Thread(target=self.download_segments_sequentially, args=(to_fetch, headers, channel_key))
-        t.daemon = True
-        t.start()
-        return [t]
-
-    def download_segments_sequentially(self, urls, headers, channel_key=None):
-        for seg_url in urls:
-            if channel_key is not None:
-                last_used = self.channel_cache_last_used.get(channel_key)
-                if last_used is not None and (time.time() - last_used) > CHANNEL_IDLE_ABORT_SECONDS:
-                    with self.prefetching_lock:
-                        self.prefetching.discard(self.segment_key(seg_url))
-                    continue
-            self.download_segment_to_cache(seg_url, headers)
-
-    def _segment_filename(self, url):
-        return url.split('/')[-1].split('?')[0]
-
-    def find_segment_by_filename(self, channel_key, filename):
-        with self.playlist_lock:
-            state = self.playlist_state.get(channel_key)
-        if not state:
-            return None
-        for seg_url, _dur in state['segments']:
-            if self._segment_filename(seg_url) == filename:
-                return seg_url
-        return None
-
-    def refresh_and_locate_segment(self, old_url, refresh_url, playlist_headers, channel_key):
-        self.get_playlist_state(channel_key, refresh_url, playlist_headers,
-                                 fallback_url=self.original_playlist_urls.get(channel_key),
-                                 force=True)
-        found = self.find_segment_by_filename(channel_key, self._segment_filename(old_url))
-        return found or old_url
-
-    def prefetch_next_segments(self, served_url, headers, channel_key):
-        with self.playlist_lock:
-            state = self.playlist_state.get(channel_key)
-        if not state or not state['segments']:
-            return
-        segments = [s[0] for s in state['segments']]
-        served_name = self._segment_filename(served_url)
-        for i, seg in enumerate(segments):
-            if self._segment_filename(seg) == served_name:
-                next_segments = segments[i + 1:i + 1 + PREFETCH_SEGMENT_COUNT]
-                if next_segments:
-                    self.prefetch_segments(next_segments, headers, channel_key=channel_key)
-                return
-
-    def fetch_playlist_raw(self, url, headers, fallback_url=None):
-        candidates = [url]
-        if fallback_url and fallback_url != url:
-            candidates.append(fallback_url)
-        for candidate in candidates:
-            try:
-                response, status, content_encoding = self.fetch_channel_with_fallback(
-                    candidate, headers, max_retries=2, timeout=10
-                )
-                if response and status in (200, 206):
-                    raw = response.read()
-                    final_url = response.geturl() or candidate
-                    response.close()
-                    try:
-                        if content_encoding == 'gzip':
-                            raw = gzip.decompress(raw)
-                        elif content_encoding == 'deflate':
-                            raw = zlib.decompress(raw)
-                    except Exception:
-                        pass
-                    return raw, final_url
-            except Exception:
-                continue
-        return None, None
-
-    def _parse_playlist_segments(self, playlist_text, base_url):
+    def _parse_playlist(self, playlist_text, base_url):
         segments = []
         target_duration = None
         media_sequence = None
@@ -810,205 +456,340 @@ class UnifiedProxy:
             pending_duration = None
         return segments, target_duration, media_sequence
 
-    def _compute_min_interval(self, total_duration):
-        if total_duration and total_duration > 0:
-            for tier, refresh in PLAYLIST_REFRESH_BY_TARGET.items():
-                if abs(total_duration - tier) <= PLAYLIST_REFRESH_TOLERANCE:
-                    return max(refresh, MIN_PLAYLIST_INTERVAL_FLOOR)
-            interval = total_duration * PLAYLIST_REFRESH_RATIO_DEFAULT
-        else:
-            interval = 6.0 * PLAYLIST_REFRESH_RATIO_DEFAULT
-        return max(interval, MIN_PLAYLIST_INTERVAL_FLOOR)
+    def _compute_refresh_interval(self, total_duration, last_segment_duration, target_duration):
+        if not total_duration or total_duration <= 0:
+            return max(target_duration or DEFAULT_SEGMENT_DURATION, MIN_REFRESH_INTERVAL)
+        interval = total_duration - REFRESH_LEAD_TIME
+        return max(interval, MIN_REFRESH_INTERVAL)
 
-    def _ingest_playlist_text(self, channel_key, playlist_text, base_url, fetched_from_origin=True):
-        segments, target_duration, media_sequence = self._parse_playlist_segments(playlist_text, base_url)
+    def fetch_playlist(self, url, headers):
+        data, final_url, _status, kind = self._fetch_url(
+            url, headers, timeout=PLAYLIST_FETCH_TIMEOUT, max_retries=2
+        )
+        if data is None:
+            return None, None, kind
+        try:
+            text = data.decode('utf-8', errors='ignore')
+        except Exception:
+            text = data.decode('latin-1', errors='ignore')
+        return text, (final_url or url), 'ok'
+
+    def get_or_refresh_playlist(self, channel_key, url, headers, force=False):
         with self.playlist_lock:
-            prev = self.playlist_state.get(channel_key)
-        req_count = prev['request_count'] if prev else 0
-        if fetched_from_origin:
-            req_count += 1
+            state = self.playlist_state.get(channel_key)
+        if state and not force:
+            elapsed = time.time() - state['last_fetch_ts']
+            if elapsed < state['refresh_interval']:
+                return state, 'cached'
+
+        text, final_url, kind = self.fetch_playlist(url, headers)
+        if text is None:
+            return state, kind
+
+        base_url = (final_url or url).rsplit('/', 1)[0]
+        segments, target_duration, media_sequence = self._parse_playlist(text, base_url)
+        if not segments:
+            return state, 'empty'
+
         total_duration = sum(d for _, d in segments if d is not None)
-        min_interval = self._compute_min_interval(total_duration)
-        state = {
-            'content': playlist_text,
-            'base': base_url,
+        last_dur = segments[-1][1]
+        refresh_interval = self._compute_refresh_interval(total_duration, last_dur, target_duration)
+
+        new_state = {
             'segments': segments,
             'target_duration': target_duration,
             'total_duration': total_duration,
             'media_sequence': media_sequence,
+            'refresh_interval': refresh_interval,
             'last_fetch_ts': time.time(),
-            'request_count': req_count,
-            'min_interval': min_interval,
         }
         with self.playlist_lock:
-            self.playlist_state[channel_key] = state
-        return state
+            self.playlist_state[channel_key] = new_state
+        return new_state, 'ok'
 
-    def get_playlist_state(self, channel_key, playlist_url, headers, fallback_url=None, force=False):
-        now = time.time()
-        with self.playlist_lock:
-            state = self.playlist_state.get(channel_key)
-        if state and not force:
-            elapsed = now - state['last_fetch_ts']
-            if elapsed < state.get('min_interval', MIN_PLAYLIST_INTERVAL_FLOOR):
-                return state, False
-        raw, final_url = self.fetch_playlist_raw(playlist_url, headers, fallback_url)
-        if raw is None:
-            return state, False
+    @staticmethod
+    def _segment_id(url):
+        return url.split('/')[-1].split('?')[0]
+
+    def _trickle_write(self, safe_write, data, duration, is_client_alive, pacing):
+        total_len = len(data)
+        if total_len == 0:
+            return True
+        if not duration or duration <= 0:
+            duration = DEFAULT_SEGMENT_DURATION
+
+        target_chunks = max(1, int(duration / TRICKLE_INTERVAL_TARGET))
+        raw_chunk_size = max(1, total_len // target_chunks)
+        packets = max(TRICKLE_MIN_TS_PACKETS, raw_chunk_size // 188)
+        chunk_size = packets * 188
+
+        view = memoryview(data)
+        if chunk_size <= 0 or chunk_size >= total_len:
+            offsets = [(0, total_len)]
+        else:
+            offsets = [(i, min(i + chunk_size, total_len)) for i in range(0, total_len, chunk_size)]
+
+        n = len(offsets)
+        chunk_duration = duration / n
+        for start, end in offsets:
+            if not is_client_alive():
+                return False
+            if not safe_write(view[start:end]):
+                return False
+            pacing['duration_sent'] += chunk_duration
+            elapsed = time.time() - pacing['session_start']
+            ahead = pacing['duration_sent'] - elapsed
+            if ahead > BUFFER_AHEAD_SECONDS:
+                time.sleep(min(ahead - BUFFER_AHEAD_SECONDS, chunk_duration * 4))
+        return True
+
+    @staticmethod
+    def _queue_remaining_duration(queue_items, default_duration):
+        total = 0.0
+        for _, dur, _ in queue_items:
+            total += dur if dur else (default_duration or DEFAULT_SEGMENT_DURATION)
+        return total
+
+    @staticmethod
+    def _segments_with_seq(state):
+        media_seq = state.get('media_sequence')
+        segments = state.get('segments') or []
+        if media_seq is None:
+            return [(u, d, None) for u, d in segments]
+        return [(u, d, media_seq + i) for i, (u, d) in enumerate(segments)]
+
+    def serve_live_channel(self, playlist_url, headers, safe_write, is_client_alive, client_sock=None, client_gone=None):
+        channel_key = self.channel_key(playlist_url)
+        self.channel_last_active[channel_key] = time.time()
+
+        state, kind = self.get_or_refresh_playlist(channel_key, playlist_url, headers, force=True)
+        if not state or not state.get('segments'):
+            return False, kind
+
+        header = (
+            "HTTP/1.1 200 OK\r\n"
+            "Content-Type: video/mp2t\r\n"
+            "Access-Control-Allow-Origin: *\r\n"
+            "Cache-Control: no-cache\r\n"
+            "Connection: keep-alive\r\n"
+            "\r\n"
+        )
+        if not safe_write(header.encode()):
+            return True
+
+        session_start = time.time()
+        pacing = {'session_start': session_start, 'duration_sent': 0.0}
+
+        queue = deque(self._segments_with_seq(state))
+        served_ids = deque()
+        served_set = set()
+        last_served_seq = [None]
+        segment_index = [0]
+
+        refresh_box = {'future': None, 'triggered_at': None}
+        next_holder = {'url': None, 'future': None}
+        empty_refresh_streak = [0]
+        consecutive_auth_failures = [0]
+
+        def start_prefetch(seg_url):
+            next_holder['url'] = seg_url
+            next_holder['future'] = executor.submit(self.download_segment, seg_url, headers)
+
+        def mark_served(seg_url, seq):
+            sid = self._segment_id(seg_url)
+            served_set.add(sid)
+            served_ids.append(sid)
+            if len(served_ids) > SERVED_IDS_MAX:
+                old = served_ids.popleft()
+                served_set.discard(old)
+            if seq is not None:
+                if last_served_seq[0] is None or seq > last_served_seq[0]:
+                    last_served_seq[0] = seq
+
+        def filter_new(candidate_state):
+            candidates = self._segments_with_seq(candidate_state)
+            has_seq = last_served_seq[0] is not None and any(s is not None for _, _, s in candidates)
+            if has_seq:
+                max_candidate_seq = max(
+                    (c[2] for c in candidates if c[2] is not None), default=None
+                )
+                if max_candidate_seq is not None and max_candidate_seq <= last_served_seq[0]:
+                    last_served_seq[0] = None
+                    served_set.clear()
+                    served_ids.clear()
+                    return candidates
+                return [c for c in candidates if c[2] is not None and c[2] > last_served_seq[0]]
+            return [c for c in candidates if self._segment_id(c[0]) not in served_set]
+
+        executor = concurrent.futures.ThreadPoolExecutor(
+            max_workers=2, thread_name_prefix='iptvproxy'
+        )
+
         try:
-            playlist_text = raw.decode('utf-8', errors='ignore')
-        except Exception:
-            playlist_text = raw.decode('latin-1', errors='ignore')
-        base_url = (final_url or playlist_url).rsplit('/', 1)[0]
-        new_state = self._ingest_playlist_text(channel_key, playlist_text, base_url, fetched_from_origin=True)
-        return new_state, True
+            if queue:
+                start_prefetch(queue[0][0])
 
-    def rewrite_m3u8_urls(self, playlist_content, base_url, proxy_host, headers=None, prefetch=True, channel_key=None, playlist_original_url=None):
-        segment_urls = []
-        playlist_original_url_encoded = quote(playlist_original_url, safe='') if playlist_original_url else ''
-        def to_proxy_url(raw_url):
-            raw_url = raw_url.strip()
-            if not raw_url:
-                return raw_url
+            while is_client_alive():
+                self.channel_last_active[channel_key] = time.time()
+
+                if refresh_box['future'] is None:
+                    elapsed_since_fetch = time.time() - state.get('last_fetch_ts', time.time())
+                    refresh_interval = state.get('refresh_interval', 0.0)
+                    
+                    default_dur = state.get('target_duration') or DEFAULT_SEGMENT_DURATION
+                    remaining_buffered = self._queue_remaining_duration(queue, default_dur)
+                    queue_critical = remaining_buffered <= REFRESH_LEAD_TIME
+                    if elapsed_since_fetch >= refresh_interval or queue_critical:
+                        if client_sock is not None and client_gone is not None:
+                            original_timeout = None
+                            try:
+                                original_timeout = client_sock.gettimeout()
+                                client_sock.settimeout(0.01)
+                                peek = client_sock.recv(1, socket.MSG_PEEK)
+                                if peek == b'':
+                                    client_gone[0] = True
+                                    break
+                            except (BlockingIOError, socket.timeout):
+                                pass
+                            except (ConnectionResetError, ConnectionAbortedError, OSError):
+                                client_gone[0] = True
+                                break
+                            finally:
+                                try:
+                                    client_sock.settimeout(original_timeout)
+                                except Exception:
+                                    pass
+
+                        refresh_box['triggered_at'] = time.time()
+                        refresh_box['future'] = executor.submit(
+                            self.get_or_refresh_playlist, channel_key, playlist_url, headers, True
+                        )
+
+                if not queue:
+                    new_state = None
+                    refresh_kind = 'pending'
+                    if refresh_box['future'] is not None:
+                        try:
+                            new_state, refresh_kind = refresh_box['future'].result(timeout=5)
+                        except Exception:
+                            new_state, refresh_kind = None, 'pending'
+                        refresh_box['future'] = None
+                    if new_state is None and refresh_kind not in ('auth', 'blocked'):
+                        new_state, refresh_kind = self.get_or_refresh_playlist(
+                            channel_key, playlist_url, headers, force=True
+                        )
+
+                    if refresh_kind in ('auth', 'blocked'):
+                        consecutive_auth_failures[0] += 1
+                        if consecutive_auth_failures[0] > MAX_CONSECUTIVE_AUTH_FAILURES:
+                            return False, refresh_kind
+                    else:
+                        consecutive_auth_failures[0] = 0
+
+                    candidate_state = new_state or state
+                    new_segments = filter_new(candidate_state)
+                    if not new_segments:
+                        if not is_client_alive():
+                            break
+                        empty_refresh_streak[0] += 1
+                        wait_s = min(
+                            MAX_WAIT_FOR_NEW_SEGMENTS * (1 + 0.5 * (empty_refresh_streak[0] - 1)),
+                            3.0,
+                        )
+                        time.sleep(wait_s)
+                        continue
+                    empty_refresh_streak[0] = 0
+                    state = candidate_state
+                    queue = deque(new_segments)
+                    start_prefetch(queue[0][0])
+                    continue
+
+                seg_url, seg_dur, seg_seq = queue.popleft()
+
+                if next_holder['url'] == seg_url and next_holder['future'] is not None:
+                    try:
+                        data, seg_kind = next_holder['future'].result(timeout=SEGMENT_FETCH_TIMEOUT)
+                    except Exception:
+                        data, seg_kind = None, 'timeout'
+                else:
+                    data, seg_kind = self.download_segment(seg_url, headers)
+                next_holder['url'] = None
+                next_holder['future'] = None
+
+                if not data:
+                    if seg_kind in ('auth', 'blocked'):
+                        consecutive_auth_failures[0] += 1
+                        new_state, refresh_kind = self.get_or_refresh_playlist(
+                            channel_key, playlist_url, headers, force=True
+                        )
+                        if refresh_kind in ('auth', 'blocked') and \
+                                consecutive_auth_failures[0] > MAX_CONSECUTIVE_AUTH_FAILURES:
+                            return False, refresh_kind
+                        if new_state:
+                            state = new_state
+                            new_segments = filter_new(state)
+                            if new_segments:
+                                queue = deque(new_segments)
+                                start_prefetch(queue[0][0])
+                                consecutive_auth_failures[0] = 0
+                                continue
+                    elif seg_kind == 'not_found':
+                        pass
+                    else:
+                        consecutive_auth_failures[0] = 0
+                        for _extra_attempt in range(SEGMENT_INLINE_RETRIES):
+                            if not is_client_alive():
+                                break
+                            time.sleep(SEGMENT_INLINE_RETRY_DELAY)
+                            data, seg_kind = self.download_segment(seg_url, headers)
+                            if data:
+                                break
+                            if seg_kind in ('auth', 'not_found', 'blocked'):
+                                break
+                else:
+                    consecutive_auth_failures[0] = 0
+
+                if queue:
+                    start_prefetch(queue[0][0])
+
+                if data:
+                    duration = seg_dur or state.get('target_duration') or DEFAULT_SEGMENT_DURATION
+                    ok = self._trickle_write(safe_write, data, duration, is_client_alive, pacing)
+                    if not ok:
+                        return True, 'ok'
+                    mark_served(seg_url, seg_seq)
+                    segment_index[0] += 1
+
+            return True, 'ok'
+        finally:
             try:
-                absolute = urljoin(base_url + '/', raw_url)
-                if absolute.startswith('http://127.0.0.1') or absolute.startswith('http://localhost'):
-                    return absolute
-                if absolute.startswith(('http://', 'https://')):
-                    full_proxy_url = "http://{}/?url={}".format(proxy_host, quote(absolute, safe=''))
-                    if playlist_original_url_encoded:
-                        full_proxy_url += "&playlist_url={}".format(playlist_original_url_encoded)
-                    return absolute, full_proxy_url
-            except Exception:
-                pass
-            return None
-        def proxify_line(raw_url):
-            result = to_proxy_url(raw_url)
-            if not result:
-                return raw_url
-            absolute, proxied = result
-            segment_urls.append(absolute)
-            return proxied
-        def proxify_attr(match):
-            raw_url = match.group(1)
-            result = to_proxy_url(raw_url)
-            if not result:
-                return match.group(0)
-            _, proxied = result
-            return 'URI="{}"'.format(proxied)
-        uri_attr_re = re.compile(r'URI="([^"]+)"')
-        lines = []
-        for line in playlist_content.split('\n'):
-            line = line.rstrip()
-            if not line:
-                lines.append(line)
-                continue
-            if line.startswith('#'):
-                if 'URI="' in line:
-                    line = uri_attr_re.sub(proxify_attr, line)
-            else:
-                line = proxify_line(line)
-            lines.append(line)
-        if prefetch and segment_urls:
-            self.prefetch_segments(segment_urls, headers, channel_key=channel_key)
-        return '\n'.join(lines)
+                executor.shutdown(wait=False, cancel_futures=True)
+            except TypeError:
+                executor.shutdown(wait=False)
 
     def _send_error(self, wfile, code, message=""):
         try:
-            body = f"{code} {message}".encode()
-            wfile.write(f"HTTP/1.1 {code} {message}\r\n".encode())
+            body = "{} {}".format(code, message).encode("utf-8", "replace")
+            wfile.write("HTTP/1.1 {} {}\r\n".format(code, message).encode())
             wfile.write(b"Content-Type: text/plain\r\n")
-            wfile.write(f"Content-Length: {len(body)}\r\n".encode())
+            wfile.write("Content-Length: {}\r\n".format(len(body)).encode())
+            wfile.write(b"Access-Control-Allow-Origin: *\r\n")
             wfile.write(b"Connection: close\r\n\r\n")
             wfile.write(body)
         except Exception:
             pass
 
-    def _send_segment(self, wfile, data, keep_alive=False):
-        try:
-            wfile.write(b"HTTP/1.1 200 OK\r\n")
-            wfile.write(b"Content-Type: video/mp2t\r\n")
-            wfile.write(b"Access-Control-Allow-Origin: *\r\n")
-            wfile.write(b"Cache-Control: no-cache\r\n")
-            if keep_alive:
-                wfile.write(b"Connection: keep-alive\r\n")
-            wfile.write(f"Content-Length: {len(data)}\r\n".encode())
-            wfile.write(b"\r\n")
-            wfile.write(data)
-        except Exception:
-            pass
-
-    def _write_m3u8_response(self, write_fn, state, channel_key, playlist_original_url, headers):
-        proxy_host = "127.0.0.1:{}".format(get_active_port())
-        rewritten = self.rewrite_m3u8_urls(
-            state['content'], state['base'], proxy_host, headers,
-            channel_key=channel_key, playlist_original_url=playlist_original_url
-        )
-        body = rewritten.encode('utf-8')
-        write_fn(
-            b"HTTP/1.1 200 OK\r\n"
-            b"Content-Type: application/vnd.apple.mpegurl\r\n" +
-            "Content-Length: {}\r\n".format(len(body)).encode() +
-            b"Access-Control-Allow-Origin: *\r\n"
-            b"Cache-Control: no-cache\r\n\r\n" +
-            body
-        )
-
-    def handle_channel_stream(self, url, headers, wfile, client_sock=None, method='GET', playlist_original_url=None):
+    def handle_channel_stream(self, url, headers, wfile, client_sock=None, method='GET'):
         if method in ('HEAD', 'OPTIONS'):
-            content_type = 'application/vnd.apple.mpegurl' if '.m3u8' in url.lower() else 'video/mp2t'
             try:
-                wfile.write("HTTP/1.1 200 OK\r\n".encode())
-                wfile.write("Content-Type: {}\r\n".format(content_type).encode())
+                wfile.write(b"HTTP/1.1 200 OK\r\n")
+                wfile.write(b"Content-Type: video/mp2t\r\n")
                 wfile.write(b"Access-Control-Allow-Origin: *\r\n")
                 wfile.write(b"Cache-Control: no-cache\r\n")
-                wfile.write(b"Content-Length: 0\r\n")
-                wfile.write(b"\r\n")
+                wfile.write(b"Content-Length: 0\r\n\r\n")
             except Exception:
                 pass
             return
-
-        playlist_url = playlist_original_url if playlist_original_url else url
-        playlist_headers = headers
-        channel_key = self.channel_key(playlist_url)
-
-        if not url.lower().endswith('.ts') and not playlist_original_url:
-            self.original_playlist_urls[channel_key] = url
-
-        refresh_url = self.original_playlist_urls.get(channel_key, playlist_url)
-
-        is_ts_segment = '.ts' in url.lower() or '/segment/' in url.lower()
-        if is_ts_segment:
-            cached = self.get_cached_segment(url)
-            if cached:
-                self._send_segment(wfile, cached)
-                self.prefetch_next_segments(url, headers, channel_key)
-                return
-
-            segment_data = self.download_complete_segment(url, headers)
-            if segment_data is None:
-                refreshed_url = self.refresh_and_locate_segment(url, refresh_url, playlist_headers, channel_key)
-                if refreshed_url != url:
-                    url = refreshed_url
-                    segment_data = self.download_complete_segment(url, headers)
-
-            if segment_data is None:
-                self._send_error(wfile, 503, "Segmento indisponivel")
-                return
-
-            self.store_segment(url, segment_data)
-            self._send_segment(wfile, segment_data)
-            self.prefetch_next_segments(url, headers, channel_key)
-            return
-
-        cache = self.get_channel_cache(url)
-
-        if not url.lower().endswith('.m3u8'):
-            cached_segment = self.get_cached_segment(url)
-            if cached_segment:
-                self._send_segment(wfile, cached_segment, keep_alive=True)
-                cache.add_chunk(cached_segment)
-                return
 
         client_gone = [False]
 
@@ -1025,190 +806,30 @@ class UnifiedProxy:
                 client_gone[0] = True
                 return False
 
-        last_alive_check = [0.0]
         def is_client_alive():
-            if client_gone[0]:
-                return False
-            if client_sock is None:
-                return True
-            now = time.time()
-            if now - last_alive_check[0] < 0.25:
-                return True
-            last_alive_check[0] = now
-            try:
-                client_sock.settimeout(0)
-                peek = client_sock.recv(1, socket.MSG_PEEK)
-                if peek == b'':
-                    client_gone[0] = True
-                    return False
-                return True
-            except BlockingIOError:
-                return True
-            except (ConnectionResetError, ConnectionAbortedError, OSError):
-                client_gone[0] = True
-                return False
-            except Exception:
-                return True
-            finally:
-                try:
-                    client_sock.settimeout(SOCKET_STREAM_TIMEOUT)
-                except Exception:
-                    pass
+            return not client_gone[0]
 
-        if url.lower().endswith('.m3u8'):
-            state, _fetched = self.get_playlist_state(
-                channel_key, url, headers,
-                fallback_url=self.original_playlist_urls.get(channel_key)
-            )
-            if not state:
-                self._send_error(wfile, 503, "Playlist indisponivel")
-                return
-            self._write_m3u8_response(safe_write, state, channel_key, url, headers)
-            return
-
-        response = None
         stream_slot_acquired = self.acquire_stream_slot()
         if not stream_slot_acquired:
+            self._send_error(wfile, 503, "Muitos streams ativos")
             return
         try:
-            response, status_code, content_encoding = self.fetch_channel_with_fallback(
-                url, headers, None, cache, is_alive=is_client_alive
+            ok, kind = self.serve_live_channel(
+                url, headers, safe_write, is_client_alive, client_sock=client_sock, client_gone=client_gone
             )
-            if response is None:
-                self._send_error(wfile, 503, "Origem indisponivel")
-                return
-            if response and status_code in [200, 206]:
-                content_type = response.headers.get('content-type', '').lower()
-                content_url = response.geturl()
-                if 'mpegurl' in content_type or '.m3u8' in content_url.lower():
-                    raw_content = response.read()
-                    try:
-                        if content_encoding == 'gzip':
-                            content = gzip.decompress(raw_content)
-                        elif content_encoding == 'deflate':
-                            content = zlib.decompress(raw_content)
-                        else:
-                            content = raw_content
-                    except Exception:
-                        content = raw_content
-                    try:
-                        playlist_text = content.decode('utf-8', errors='ignore')
-                        base_url = content_url.rsplit('/', 1)[0]
-                        state = self._ingest_playlist_text(channel_key, playlist_text, base_url,
-                                                             fetched_from_origin=True)
-                        response.close()
-                        self._write_m3u8_response(safe_write, state, channel_key, content_url, headers)
-                        return
-                    except Exception:
-                        return
-                content_length_header = response.headers.get('content-length')
-                try:
-                    expected_length = int(content_length_header) if content_length_header else None
-                except (TypeError, ValueError):
-                    expected_length = None
-
-                bytes_received = 0
-                header_bytes = ("HTTP/1.1 {} OK\r\n".format(206 if status_code == 206 else 200) +
-                                "Content-Type: video/mp2t\r\n"
-                                "Access-Control-Allow-Origin: *\r\n"
-                                "Cache-Control: no-cache\r\n"
-                                "Connection: keep-alive\r\n")
-                if content_length_header:
-                    header_bytes += "Content-Length: {}\r\n".format(content_length_header)
-                header_bytes += "\r\n"
-                if not safe_write(header_bytes.encode()):
-                    return
-                cache.stream_started = True
-
-                consecutive_errors = 0
-                eof_reconnects = 0
-                total_reconnects = 0
-                last_progress = time.time()
-                while not client_gone[0]:
-                    if not is_client_alive():
-                        break
-                    if time.time() - last_progress > MAX_STALL_SECONDS:
-                        break
-                    if total_reconnects > MAX_TOTAL_RECONNECTS:
-                        break
-                    try:
-                        if response:
-                            chunk = response.read(BUFFER_SIZE)
-                            if chunk:
-                                cache.add_chunk(chunk)
-                                if not safe_write(chunk):
-                                    break
-                                bytes_received += len(chunk)
-                                consecutive_errors = 0
-                                eof_reconnects = 0
-                                last_progress = time.time()
-                            else:
-                                try:
-                                    response.close()
-                                except Exception:
-                                    pass
-                                response = None
-                                if expected_length is not None and bytes_received >= expected_length:
-                                    break
-                                eof_reconnects += 1
-                                if eof_reconnects > MAX_EOF_RECONNECTS:
-                                    break
-                        else:
-                            total_reconnects += 1
-                            if not is_client_alive():
-                                break
-                            new_response, new_status, new_url = self.reconnect_stream(
-                                url, headers, cache, is_client_alive, channel_key, refresh_url, playlist_headers
-                            )
-                            if new_response:
-                                url = new_url
-                                response = new_response
-                                expected_length = None
-                                bytes_received = 0
-                                consecutive_errors = 0
-                                eof_reconnects = 0
-                                last_progress = time.time()
-                                continue
-                            if not is_client_alive():
-                                break
-                            time.sleep(1)
-                    except (BrokenPipeError, socket.error, ConnectionResetError, ConnectionAbortedError):
-                        client_gone[0] = True
-                        break
-                    except Exception:
-                        consecutive_errors += 1
-                        if consecutive_errors >= 3:
-                            total_reconnects += 1
-                            if not is_client_alive():
-                                break
-                            if response:
-                                try:
-                                    response.close()
-                                except Exception:
-                                    pass
-                                response = None
-                            new_response, new_status, new_url = self.reconnect_stream(
-                                url, headers, cache, is_client_alive, channel_key, refresh_url, playlist_headers
-                            )
-                            if new_response:
-                                url = new_url
-                                response = new_response
-                                expected_length = None
-                                bytes_received = 0
-                                consecutive_errors = 0
-                                last_progress = time.time()
-                                continue
-                        time.sleep(0.5)
-        except Exception:
-            pass
+            if not ok:
+                status = ERROR_KIND_TO_CLIENT_STATUS.get(kind, 503)
+                if kind == 'auth':
+                    msg = "Credencial/token invalido ou expirado"
+                elif kind == 'blocked':
+                    msg = "Acesso bloqueado pelo servidor de origem"
+                elif kind == 'not_found':
+                    msg = "Conteudo nao encontrado na origem"
+                else:
+                    msg = "Canal indisponivel (instabilidade momentanea)"
+                self._send_error(wfile, status, msg)
         finally:
-            if response:
-                try:
-                    response.close()
-                except Exception:
-                    pass
-            if stream_slot_acquired:
-                self.release_stream_slot()
+            self.release_stream_slot()
 
 class ProxyHandler(socketserver.StreamRequestHandler):
     proxy = UnifiedProxy()
@@ -1216,7 +837,7 @@ class ProxyHandler(socketserver.StreamRequestHandler):
     def send_response(self, code, message=None):
         if message is None:
             message = http.client.responses.get(code, "OK")
-        self.resp_statusline = f"HTTP/1.1 {code} {message}\r\n"
+        self.resp_statusline = "HTTP/1.1 {} {}\r\n".format(code, message)
         self.resp_headers = []
 
     def send_header(self, key, value):
@@ -1229,14 +850,14 @@ class ProxyHandler(socketserver.StreamRequestHandler):
                 self.resp_headers.append(("Connection", "close"))
             data = self.resp_statusline
             for k, v in self.resp_headers:
-                data += f"{k}: {v}\r\n"
+                data += "{}: {}\r\n".format(k, v)
             data += "\r\n"
             self.wfile.write(data.encode("utf-8", "replace"))
         except Exception:
             pass
 
     def send_error(self, code, message=""):
-        body = (f"{code} {message}").encode("utf-8", "replace")
+        body = "{} {}".format(code, message).encode("utf-8", "replace")
         self.send_response(code)
         self.send_header("Content-Type", "text/plain; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
@@ -1250,6 +871,7 @@ class ProxyHandler(socketserver.StreamRequestHandler):
     def handle(self):
         try:
             self.connection.settimeout(SOCKET_IDLE_TIMEOUT)
+            self.connection.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
         except Exception:
             pass
         slot_ok = True
@@ -1332,9 +954,7 @@ class ProxyHandler(socketserver.StreamRequestHandler):
 
     def process_request(self):
         try:
-            parsed = self.proxy.extract_url_from_path(self.path)
-            url = parsed.get('url')
-            playlist_original_url = parsed.get('playlist_url')
+            url = self.proxy.extract_url_from_path(self.path)
             if not url:
                 html = """<html><body>
 <h2>XC Pro Proxy Active</h2>
@@ -1349,7 +969,9 @@ class ProxyHandler(socketserver.StreamRequestHandler):
             headers = {}
             for key, value in self.headers.items():
                 headers[key.lower()] = value
-            self.proxy.handle_channel_stream(url, headers, self.wfile, getattr(self, 'connection', None), method=self.command, playlist_original_url=playlist_original_url)
+            self.proxy.handle_channel_stream(
+                url, headers, self.wfile, getattr(self, 'connection', None), method=self.command
+            )
         except Exception:
             try:
                 self.send_error(500, "Internal Server Error")

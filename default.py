@@ -211,8 +211,8 @@ def menu_tv_fast():
 def menu_movies_fast():
     items = [
         {'label': 'Pesquisar Filme', 'description': WELCOME_DESC, 'icon': ADDON_ICON, 'query': {'action': 'find_movies'}},
-        {'label': 'Top 250 Filmes', 'description': WELCOME_DESC, 'icon': ADDON_ICON, 'query': {'action': 'imdb_movies_250'}},
-        {'label': 'Filmes Populares', 'description': WELCOME_DESC, 'icon': ADDON_ICON, 'query': {'action': 'imdb_movies_popular'}},
+        {'label': 'Populares', 'description': WELCOME_DESC, 'icon': ADDON_ICON, 'query': {'action': 'movies_popular'}},
+        {'label': 'Em Alta', 'description': WELCOME_DESC, 'icon': ADDON_ICON, 'query': {'action': 'movies_trending'}},
     ]
     while True:
         idx, item = list_dialog.open_list_menu('FILMES', items, fanart=ADDON_FANART)
@@ -224,8 +224,8 @@ def menu_movies_fast():
 def menu_series_fast():
     items = [
         {'label': 'Pesquisar Série', 'description': WELCOME_DESC, 'icon': ADDON_ICON, 'query': {'action': 'find_series'}},
-        {'label': 'Top 250 Séries', 'description': WELCOME_DESC, 'icon': ADDON_ICON, 'query': {'action': 'imdb_series_250'}},
-        {'label': 'Séries Populares', 'description': WELCOME_DESC, 'icon': ADDON_ICON, 'query': {'action': 'imdb_series_popular'}},
+        {'label': 'Populares', 'description': WELCOME_DESC, 'icon': ADDON_ICON, 'query': {'action': 'series_popular'}},
+        {'label': 'Em Alta', 'description': WELCOME_DESC, 'icon': ADDON_ICON, 'query': {'action': 'series_trending'}},
     ]
     while True:
         idx, item = list_dialog.open_list_menu('SÉRIES', items, fanart=ADDON_FANART)

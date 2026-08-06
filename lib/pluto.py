@@ -47,6 +47,12 @@ SESSION = build_session()
 
 epg_fetch_active = threading.Event()
 
+def epg_download_enabled():
+    try:
+        return xbmcaddon.Addon().getSettingBool('download_epg')
+    except Exception:
+        return False
+
 PLUTO_EPG_TTL = 86400
 PLUTO_EPG_CACHE_PATH = os.path.join(profile, 'epg_pluto_index.json')
 
@@ -103,6 +109,8 @@ PLUTO_FETCH_LOCK = threading.Lock()
 
 
 def ensure_pluto_epg_background():
+    if not epg_download_enabled():
+        return
     if load_pluto_epg_disk() is not None:
         return
     if epg_fetch_active.is_set():
@@ -220,6 +228,9 @@ def _pluto_day_windows(time_brazil):
 
 def playlist_pluto_epg(force_refresh=False):
     today = current_day_key()
+    if not epg_download_enabled():
+        return fetch_pluto_channels_only()
+
     if not force_refresh:
         disk_channels = load_pluto_epg_disk()
         if disk_channels is not None:
@@ -233,7 +244,19 @@ def playlist_pluto_epg(force_refresh=False):
         return _fetch_pluto_epg(today)
 
 
-def _fetch_pluto_epg(today):
+PLUTO_CHANNELS_ONLY_WINDOW_MINUTES = 15
+
+
+def fetch_pluto_channels_only():
+    time_brazil = get_current_time()
+    windows = [(time_brazil, time_brazil + timedelta(minutes=PLUTO_CHANNELS_ONLY_WINDOW_MINUTES))]
+    channels = _fetch_pluto_epg(current_day_key(), windows=windows, persist=False)
+    for ch in channels:
+        ch['programs'] = []
+    return channels
+
+
+def _fetch_pluto_epg(today, windows=None, persist=True):
     result = []
     try:
         time_brazil = get_current_time()
@@ -252,7 +275,7 @@ def _fetch_pluto_epg(today):
 
         boot_result = {}
         window_results = {}
-        windows = _pluto_day_windows(time_brazil)
+        windows = windows if windows is not None else _pluto_day_windows(time_brazil)
 
         def fetch_boot():
             try:
@@ -358,7 +381,7 @@ def _fetch_pluto_epg(today):
     except Exception:
         pass
 
-    if result:
+    if result and persist:
         save_pluto_epg_disk(result, today)
 
     return result
