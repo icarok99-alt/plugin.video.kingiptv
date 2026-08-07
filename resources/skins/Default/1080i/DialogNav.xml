@@ -162,10 +162,10 @@
                         <visible>!String.IsEqual(Window(Home).Property(nav.mode),list) | String.IsEqual(Window(Home).Property(nav.list.kind),episodes)</visible>
                     </control>
                     <control type="image">
-                        <posx>44</posx>
-                        <posy>4</posy>
+                        <posx>16</posx>
+                        <posy>14</posy>
                         <width>75</width>
-                        <height>110</height>
+                        <height>92</height>
                         <texture fallback="icon.png">$INFO[ListItem.Icon]</texture>
                         <aspectratio aligny="center" align="center">keep</aspectratio>
                         <visible>String.IsEqual(Window(Home).Property(nav.mode),list) + !String.IsEqual(Window(Home).Property(nav.list.kind),episodes)</visible>
@@ -252,10 +252,10 @@
                         <visible>!String.IsEqual(Window(Home).Property(nav.mode),list) | String.IsEqual(Window(Home).Property(nav.list.kind),episodes)</visible>
                     </control>
                     <control type="image">
-                        <posx>44</posx>
-                        <posy>4</posy>
+                        <posx>16</posx>
+                        <posy>14</posy>
                         <width>75</width>
-                        <height>110</height>
+                        <height>92</height>
                         <texture fallback="icon.png">$INFO[ListItem.Icon]</texture>
                         <aspectratio aligny="center" align="center">keep</aspectratio>
                         <visible>String.IsEqual(Window(Home).Property(nav.mode),list) + !String.IsEqual(Window(Home).Property(nav.list.kind),episodes)</visible>
@@ -341,26 +341,25 @@
                 <texture border="28">epg_panel_bg.png</texture>
             </control>
 
-            <control type="image">
-                <posx>276</posx>
+            <control type="textbox">
+                <posx>40</posx>
                 <posy>20</posy>
-                <width>360</width>
-                <height>527</height>
-                <texture fallback="-">$INFO[Window(Home).Property(nav.detail.poster)]</texture>
-                <aspectratio aligny="center" align="center">keep</aspectratio>
+                <width>382</width>
+                <height>620</height>
+                <font>font13</font>
+                <textcolor>FFCFCFCF</textcolor>
+                <label>[B]$INFO[Window(Home).Property(nav.detail.desc)][/B]</label>
+                <autoscroll delay="2600" time="2600" repeat="2600">true</autoscroll>
                 <visible>!String.IsEmpty(Window(Home).Property(nav.detail.poster)) + !String.IsEqual(Window(Home).Property(nav.list.kind),episodes)</visible>
             </control>
 
-            <control type="label">
-                <posx>250</posx>
-                <posy>557</posy>
-                <width>400</width>
-                <height>36</height>
-                <align>center</align>
-                <aligny>center</aligny>
-                <font>font13</font>
-                <textcolor>FFFFFFFF</textcolor>
-                <label>Ano de Lançamento: [COLOR=FFF3B73B]$INFO[Window(Home).Property(nav.detail.year)][/COLOR]</label>
+            <control type="image">
+                <posx>452</posx>
+                <posy>20</posy>
+                <width>420</width>
+                <height>620</height>
+                <texture fallback="-">$INFO[Window(Home).Property(nav.detail.poster)]</texture>
+                <aspectratio aligny="center" align="center">keep</aspectratio>
                 <visible>!String.IsEmpty(Window(Home).Property(nav.detail.poster)) + !String.IsEqual(Window(Home).Property(nav.list.kind),episodes)</visible>
             </control>
 
@@ -420,23 +419,33 @@
 
             <control type="image">
                 <posx>40</posx>
-                <posy>600</posy>
+                <posy>656</posy>
                 <width>832</width>
                 <height>6</height>
                 <texture>epg_divider_line.png</texture>
                 <visible>!String.IsEmpty(Window(Home).Property(nav.detail.poster)) + !String.IsEqual(Window(Home).Property(nav.list.kind),episodes)</visible>
             </control>
 
-            <control type="textbox">
+            <control type="label">
                 <posx>40</posx>
-                <posy>634</posy>
-                <width>832</width>
-                <height>206</height>
+                <posy>684</posy>
+                <width>400</width>
+                <height>36</height>
                 <font>font13</font>
-                <textcolor>FFCFCFCF</textcolor>
-                <label>[B]$INFO[Window(Home).Property(nav.detail.desc)][/B]</label>
-                <autoscroll delay="2600" time="2600" repeat="2600">true</autoscroll>
+                <textcolor>FFFFFFFF</textcolor>
+                <label>Ano de Lançamento: [COLOR=FFF3B73B]$INFO[Window(Home).Property(nav.detail.year)][/COLOR]</label>
                 <visible>!String.IsEmpty(Window(Home).Property(nav.detail.poster)) + !String.IsEqual(Window(Home).Property(nav.list.kind),episodes)</visible>
+            </control>
+
+            <control type="label">
+                <posx>40</posx>
+                <posy>728</posy>
+                <width>792</width>
+                <height>36</height>
+                <font>font13</font>
+                <textcolor>FFFFFFFF</textcolor>
+                <label>Gêneros: [COLOR=FFF3B73B]$INFO[Window(Home).Property(nav.detail.genres)][/COLOR]</label>
+                <visible>!String.IsEmpty(Window(Home).Property(nav.detail.poster)) + !String.IsEqual(Window(Home).Property(nav.list.kind),episodes) + !String.IsEmpty(Window(Home).Property(nav.detail.genres))</visible>
             </control>
         </control>
 

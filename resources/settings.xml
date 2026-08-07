@@ -2,6 +2,7 @@
 <settings>
 <category label="TV Ao Vivo">
         <setting id="live_quality_mode" type="enum" values="1080p (Full HD) - Padrão|720p (HD) - Internet lenta" default="0" label="Qualidade dos canais ao vivo"/>
+        <setting id="download_epg" type="bool" label="Baixar guia de programação (EPG)" default="false"/>
         <setting id="adult_unlocked" type="bool" default="false" visible="false"/>
         <setting label="Desbloquear canais adultos" type="action" action="RunScript(special://home/addons/plugin.video.kingiptv/lib/parental.py,unlock)" option="close"/>
         <setting label="Bloquear canais adultos novamente" type="action" action="RunScript(special://home/addons/plugin.video.kingiptv/lib/parental.py,lock)" option="close"/>
