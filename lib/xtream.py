@@ -32,9 +32,11 @@ USER_AGENT = (
 def get_user_agent():
     return USER_AGENT
 
+EPG_SOURCE_XTREAM = 1
+
 def epg_download_enabled():
     try:
-        return xbmcaddon.Addon().getSettingBool('download_epg')
+        return xbmcaddon.Addon().getSettingInt('epg_source') == EPG_SOURCE_XTREAM
     except Exception:
         return False
 

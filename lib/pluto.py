@@ -47,9 +47,11 @@ SESSION = build_session()
 
 epg_fetch_active = threading.Event()
 
+EPG_SOURCE_PLUTO = 2
+
 def epg_download_enabled():
     try:
-        return xbmcaddon.Addon().getSettingBool('download_epg')
+        return xbmcaddon.Addon().getSettingInt('epg_source') == EPG_SOURCE_PLUTO
     except Exception:
         return False
 
