@@ -734,12 +734,6 @@ class UnifiedProxy:
                     duration = seg_dur or state.get('target_duration')
                     if pacing['session_start'] is None:
                         pacing['session_start'] = time.time()
-                        # Credito inicial negativo: permite enviar ate TRICKLE_INITIAL_BURST_SECONDS
-                        # de conteudo sem throttle antes do pacing em tempo real comecar a valer.
-                        # Isso evita que o player fique sem colchao de buffer enquanto ainda esta
-                        # inicializando demuxer/codec (o que causava buffering ~3s apos o inicio real
-                        # da reproducao, ja que o trickle comecava a estrangular a entrega desde o
-                        # primeiro byte enviado, sem folga alguma).
                         pacing['duration_sent'] = -TRICKLE_INITIAL_BURST_SECONDS
                     ok = self._trickle_write(safe_write, data, duration, is_client_alive, pacing)
                     if not ok:
