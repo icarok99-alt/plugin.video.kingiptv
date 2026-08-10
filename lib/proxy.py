@@ -114,7 +114,6 @@ EXTINF_RE = re.compile(r'#EXTINF:\s*([\d.]+)')
 TARGETDURATION_RE = re.compile(r'#EXT-X-TARGETDURATION:\s*(\d+(?:\.\d+)?)')
 MEDIA_SEQUENCE_RE = re.compile(r'#EXT-X-MEDIA-SEQUENCE:\s*(\d+)')
 
-
 AUTH_ERROR_CODES = {401, 403}
 NOT_FOUND_CODES = {404, 410}
 BLOCKED_CODES = {451}
@@ -258,19 +257,15 @@ class UnifiedProxy:
         self.ssl_context.check_hostname = False
         self.ssl_context.verify_mode = ssl.CERT_NONE
         self.conn_pool = ConnectionPool(self.ssl_context)
-
         self.channel_ua_cache = {}
         self.channel_ua_lock = threading.Lock()
-
         self.playlist_lock = threading.Lock()
         self.playlist_state = {}
         self.channel_last_active = {}
-
         self.active_streams = 0
         self.active_streams_lock = threading.Lock()
         self.active_handlers = 0
         self.active_handlers_lock = threading.Lock()
-
         self.maintenance_started = False
         self.maintenance_lock = threading.Lock()
 
@@ -938,7 +933,7 @@ class ProxyHandler(socketserver.StreamRequestHandler):
             url = self.proxy.extract_url_from_path(self.path)
             if not url:
                 html = """<html><body>
-<h2>XC Pro Proxy Active</h2>
+<h2>KingIPTV Proxy Active</h2>
 <p>Proxy funcionando na porta {}</p>
 </body></html>""".format(get_active_port()).encode("utf-8")
                 self.send_response(200)
