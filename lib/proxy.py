@@ -96,15 +96,11 @@ SEGMENT_INLINE_RETRY_DELAY = 0.3
 PLAYLIST_FETCH_TIMEOUT = 10
 SEGMENT_FETCH_TIMEOUT = 15
 
-DEFAULT_SEGMENT_DURATION = 6.0
 MIN_REFRESH_INTERVAL = 2.0
 MAX_WAIT_FOR_NEW_SEGMENTS = 1.0
 SERVED_IDS_MAX = 400
 TRICKLE_INTERVAL_TARGET = 0.1
 TRICKLE_MIN_TS_PACKETS = 8
-BUFFER_AHEAD_SECONDS = 6.0
-
-REFRESH_LEAD_TIME = 5.0
 
 MAX_ACTIVE_CHANNEL_STREAMS = 12
 MAX_CONCURRENT_HANDLERS = 20
@@ -456,12 +452,6 @@ class UnifiedProxy:
             pending_duration = None
         return segments, target_duration, media_sequence
 
-    def _compute_refresh_interval(self, total_duration, last_segment_duration, target_duration):
-        if not total_duration or total_duration <= 0:
-            return max(target_duration or DEFAULT_SEGMENT_DURATION, MIN_REFRESH_INTERVAL)
-        interval = total_duration - REFRESH_LEAD_TIME
-        return max(interval, MIN_REFRESH_INTERVAL)
-
     def fetch_playlist(self, url, headers):
         data, final_url, _status, kind = self._fetch_url(
             url, headers, timeout=PLAYLIST_FETCH_TIMEOUT, max_retries=2
@@ -479,7 +469,8 @@ class UnifiedProxy:
             state = self.playlist_state.get(channel_key)
         if state and not force:
             elapsed = time.time() - state['last_fetch_ts']
-            if elapsed < state['refresh_interval']:
+            cache_ttl = max(state.get('target_duration') or MIN_REFRESH_INTERVAL, MIN_REFRESH_INTERVAL)
+            if elapsed < cache_ttl:
                 return state, 'cached'
 
         text, final_url, kind = self.fetch_playlist(url, headers)
@@ -492,15 +483,12 @@ class UnifiedProxy:
             return state, 'empty'
 
         total_duration = sum(d for _, d in segments if d is not None)
-        last_dur = segments[-1][1]
-        refresh_interval = self._compute_refresh_interval(total_duration, last_dur, target_duration)
 
         new_state = {
             'segments': segments,
             'target_duration': target_duration,
             'total_duration': total_duration,
             'media_sequence': media_sequence,
-            'refresh_interval': refresh_interval,
             'last_fetch_ts': time.time(),
         }
         with self.playlist_lock:
@@ -516,7 +504,7 @@ class UnifiedProxy:
         if total_len == 0:
             return True
         if not duration or duration <= 0:
-            duration = DEFAULT_SEGMENT_DURATION
+            duration = MIN_REFRESH_INTERVAL
 
         target_chunks = max(1, int(duration / TRICKLE_INTERVAL_TARGET))
         raw_chunk_size = max(1, total_len // target_chunks)
@@ -539,16 +527,9 @@ class UnifiedProxy:
             pacing['duration_sent'] += chunk_duration
             elapsed = time.time() - pacing['session_start']
             ahead = pacing['duration_sent'] - elapsed
-            if ahead > BUFFER_AHEAD_SECONDS:
-                time.sleep(min(ahead - BUFFER_AHEAD_SECONDS, chunk_duration * 4))
+            if ahead > 0:
+                time.sleep(min(ahead, chunk_duration * 4))
         return True
-
-    @staticmethod
-    def _queue_remaining_duration(queue_items, default_duration):
-        total = 0.0
-        for _, dur, _ in queue_items:
-            total += dur if dur else (default_duration or DEFAULT_SEGMENT_DURATION)
-        return total
 
     @staticmethod
     def _segments_with_seq(state):
@@ -577,8 +558,7 @@ class UnifiedProxy:
         if not safe_write(header.encode()):
             return True
 
-        session_start = time.time()
-        pacing = {'session_start': session_start, 'duration_sent': 0.0}
+        pacing = {'session_start': None, 'duration_sent': 0.0}
 
         queue = deque(self._segments_with_seq(state))
         served_ids = deque()
@@ -633,13 +613,8 @@ class UnifiedProxy:
                 self.channel_last_active[channel_key] = time.time()
 
                 if refresh_box['future'] is None:
-                    elapsed_since_fetch = time.time() - state.get('last_fetch_ts', time.time())
-                    refresh_interval = state.get('refresh_interval', 0.0)
-                    
-                    default_dur = state.get('target_duration') or DEFAULT_SEGMENT_DURATION
-                    remaining_buffered = self._queue_remaining_duration(queue, default_dur)
-                    queue_critical = remaining_buffered <= REFRESH_LEAD_TIME
-                    if elapsed_since_fetch >= refresh_interval or queue_critical:
+                    last_segment_queued = len(queue) <= 1
+                    if last_segment_queued:
                         if client_sock is not None and client_gone is not None:
                             original_timeout = None
                             try:
@@ -753,7 +728,9 @@ class UnifiedProxy:
                     start_prefetch(queue[0][0])
 
                 if data:
-                    duration = seg_dur or state.get('target_duration') or DEFAULT_SEGMENT_DURATION
+                    duration = seg_dur or state.get('target_duration')
+                    if pacing['session_start'] is None:
+                        pacing['session_start'] = time.time()
                     ok = self._trickle_write(safe_write, data, duration, is_client_alive, pacing)
                     if not ok:
                         return True, 'ok'
