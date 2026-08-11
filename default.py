@@ -163,8 +163,6 @@ def _build_home_items(active):
 def home():
     epg_started_for = set()
 
-    # Pluto EPG: dispara uma vez no início do home (independente da lista IPTV)
-    # para que, ao abrir "Pluto TV", a programação já esteja pronta.
     def _start_pluto_epg():
         try:
             from lib import pluto
@@ -194,7 +192,6 @@ def home():
 
 
 def menu_tv_fast():
-    # EPG é disparado apenas no home() (e indiretamente após troca de lista).
     while True:
         active = list_manager.get_active_list()
         items = []
