@@ -1099,7 +1099,7 @@ class API:
                     'data': itens,
                     'timestamp': time.time()
                 }
-        ensure_epg_xml_background(self.dns, self.username, self.password)
+        # EPG é disparado apenas no home() (e indiretamente após troca de lista).
         return itens
     def channels_open_epg(self, url):
         result = []

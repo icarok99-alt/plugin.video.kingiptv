@@ -213,16 +213,24 @@ def to_lazy_channels(channels):
     return lite
 
 
-PLUTO_EPG_WINDOW_HOURS = 6
+# Janelas de 8h para cobrir ~24h de programação com poucas requisições.
+# O cache em disco (day + TTL 86400) garante que o download só rode uma vez por dia.
+PLUTO_EPG_WINDOW_HOURS = 8
+PLUTO_EPG_HOURS_AHEAD = 24
 
 
 def _pluto_day_windows(time_brazil):
+    # Cobre do início do dia atual até +24h (ou a partir de agora se já passou da meia-noite
+    # o suficiente), em fatias de PLUTO_EPG_WINDOW_HOURS.
     day_start = time_brazil.replace(hour=0, minute=0, second=0, microsecond=0)
-    day_end = day_start + timedelta(days=1)
+    window_end = day_start + timedelta(hours=PLUTO_EPG_HOURS_AHEAD)
+    # Se o usuário abrir o addon à tarde/noite, ainda pegamos o restante do dia + madrugada
+    if time_brazil > day_start:
+        window_end = max(window_end, time_brazil + timedelta(hours=PLUTO_EPG_HOURS_AHEAD))
     windows = []
     cursor = day_start
-    while cursor < day_end:
-        nxt = min(cursor + timedelta(hours=PLUTO_EPG_WINDOW_HOURS), day_end)
+    while cursor < window_end:
+        nxt = min(cursor + timedelta(hours=PLUTO_EPG_WINDOW_HOURS), window_end)
         windows.append((cursor, nxt))
         cursor = nxt
     return windows
