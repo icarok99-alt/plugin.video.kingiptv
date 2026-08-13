@@ -173,7 +173,7 @@ def clean_category_name(name):
 
 SUPERSCRIPTS = '¹²³⁴⁵⁶⁷⁸⁹⁰'
 
-QUALITY_TAGS = ['FHDR', 'FHD\\+', 'FHD', 'UHD', 'HD\\+', 'HD', 'SD', '4K']
+QUALITY_TAGS = ['FHDR', 'FHD\\+', 'FHD', 'UHD', 'HD\\+', 'HD', 'SD', '4K', 'ALT']
 CODEC_TAGS = ['H265', 'H264', 'HEVC', 'AVC', 'X265', 'X264']
 RESOLUTION_TAGS = QUALITY_TAGS + CODEC_TAGS
 
@@ -244,6 +244,7 @@ def ordenar_resolucao(name, quality_mode='1080p'):
     is_uhd = 'UHD' in name or '4K' in name
     is_hd = 'HD' in name and not is_fhd and not is_uhd
     is_sd = 'SD' in name
+    is_alt = 'ALT' in name
 
     if quality_mode == '720p':
         if is_hd:
@@ -258,7 +259,9 @@ def ordenar_resolucao(name, quality_mode='1080p'):
             return 5
         if is_uhd:
             return 6
-        return 7
+        if is_alt:
+            return 7
+        return 8
 
     if is_fhd:
         return 1
@@ -272,7 +275,9 @@ def ordenar_resolucao(name, quality_mode='1080p'):
         return 5
     if is_sd:
         return 6
-    return 7
+    if is_alt:
+        return 7
+    return 8
 
 def normalize_epg_channel_id(value):
     return str(value or '').strip().lower()
@@ -364,12 +369,6 @@ def extract_program_title(program):
              program.get('event') or program.get('event_name') or '')
     return decode_b64_safe(title).strip()
 
-# Alguns provedores geram o XMLTV a partir de um JSON interno e vazam o
-# restante da serialização dentro da tag <desc>, por exemplo:
-#   Exibição dos melhores momentos do Vai Que Cola."},"scheduledDate":"2026-08-06T03:25:00-03:00.
-# O texto real termina em "...Vai Que Cola." e o resto é lixo de JSON.
-# Esse regex detecta o ponto onde o JSON "vaza" (ex: `"},"campo":"valor`) e
-# corta o texto ali, e também apara aspas/pontuação soltas no fim.
 _EPG_DESC_JSON_LEAK_RE = re.compile(
     r'["\']?\s*\}\s*,\s*"[A-Za-z_][A-Za-z0-9_]*"\s*:\s*.*$', re.DOTALL
 )
