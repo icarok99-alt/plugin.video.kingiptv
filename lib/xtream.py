@@ -368,12 +368,6 @@ def extract_program_title(program):
              program.get('event') or program.get('event_name') or '')
     return decode_b64_safe(title).strip()
 
-# Alguns provedores geram o XMLTV a partir de um JSON interno e vazam o
-# restante da serialização dentro da tag <desc>, por exemplo:
-#   Exibição dos melhores momentos do Vai Que Cola."},"scheduledDate":"2026-08-06T03:25:00-03:00.
-# O texto real termina em "...Vai Que Cola." e o resto é lixo de JSON.
-# Esse regex detecta o ponto onde o JSON "vaza" (ex: `"},"campo":"valor`) e
-# corta o texto ali, e também apara aspas/pontuação soltas no fim.
 _EPG_DESC_JSON_LEAK_RE = re.compile(
     r'["\']?\s*\}\s*,\s*"[A-Za-z_][A-Za-z0-9_]*"\s*:\s*.*$', re.DOTALL
 )
