@@ -18,7 +18,6 @@ IPTV_PROBLEM_LOG = translate(os.path.join(profile, 'iptv_problems_log.txt'))
 REQUEST_TIMEOUT = 10
 MAX_RETRIES = 1
 CACHE_FAILED_URLS = {}
-EPG_XML_TTL = 86400
 EPG_XML_INDEX_VERSION = 'kingIPTV_epg_v2'
 EPG_INDEX_MEMORY = {}
 EPG_INDEX_LOCK = threading.Lock()
@@ -369,6 +368,12 @@ def extract_program_title(program):
              program.get('event') or program.get('event_name') or '')
     return decode_b64_safe(title).strip()
 
+# Alguns provedores geram o XMLTV a partir de um JSON interno e vazam o
+# restante da serialização dentro da tag <desc>, por exemplo:
+#   Exibição dos melhores momentos do Vai Que Cola."},"scheduledDate":"2026-08-06T03:25:00-03:00.
+# O texto real termina em "...Vai Que Cola." e o resto é lixo de JSON.
+# Esse regex detecta o ponto onde o JSON "vaza" (ex: `"},"campo":"valor`) e
+# corta o texto ali, e também apara aspas/pontuação soltas no fim.
 _EPG_DESC_JSON_LEAK_RE = re.compile(
     r'["\']?\s*\}\s*,\s*"[A-Za-z_][A-Za-z0-9_]*"\s*:\s*.*$', re.DOTALL
 )
@@ -542,8 +547,7 @@ def epg_xml_fresh(dns, username, password):
     meta = safe_read_json(paths['meta'])
     if meta.get('fingerprint') != epg_fingerprint(dns, username, password):
         return False
-    fetched_at = int(meta.get('fetched_at') or 0)
-    if not fetched_at or (time.time() - fetched_at) >= EPG_XML_TTL:
+    if not meta.get('fetched_at'):
         return False
     if meta.get('day') != current_day_key():
         return False
@@ -559,8 +563,7 @@ def epg_index_fresh(dns, username, password):
         return False
     if index.get('fingerprint') != epg_fingerprint(dns, username, password):
         return False
-    generated_at = int(index.get('generated_at') or 0)
-    if not generated_at or (time.time() - generated_at) >= EPG_XML_TTL:
+    if not index.get('generated_at'):
         return False
     if index.get('day') != current_day_key():
         return False
