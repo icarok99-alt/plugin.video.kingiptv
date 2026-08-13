@@ -55,7 +55,6 @@ def epg_download_enabled():
     except Exception:
         return False
 
-PLUTO_EPG_TTL = 86400
 PLUTO_EPG_CACHE_PATH = os.path.join(profile, 'epg_pluto_index.json')
 
 
@@ -89,9 +88,6 @@ def load_pluto_epg_disk():
     today = current_day_key()
     cached = _pluto_safe_read_json(PLUTO_EPG_CACHE_PATH)
     if cached.get('day') != today:
-        return None
-    generated_at = int(cached.get('generated_at') or 0)
-    if not generated_at or (time.time() - generated_at) >= PLUTO_EPG_TTL:
         return None
     channels = cached.get('channels')
     if not isinstance(channels, list) or not channels:
