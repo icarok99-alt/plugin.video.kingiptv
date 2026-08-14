@@ -22,7 +22,18 @@ BAD_ICON_CACHE = set()
 GOOD_ICON_CACHE = set()
 BAD_ICON_LOCK = threading.Lock()
 ICON_CHECK_TIMEOUT = 2.5
+EPG_XML_INDEX_VERSION = 'kingIPTV_epg_v2'
+EPG_INDEX_MEMORY = {}
+EPG_INDEX_LOCK = threading.Lock()
+EPG_ACTIVE = set()
+EPG_ACTIVE_LOCK = threading.Lock()
+USER_AGENT = (
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
+    'AppleWebKit/537.36 (KHTML, like Gecko) Chrome/132.0.0.0 Safari/537.36'
+)
 
+def get_user_agent():
+    return USER_AGENT
 
 def icon_is_reachable(url):
     if not url:
@@ -40,18 +51,6 @@ def icon_is_reachable(url):
     with BAD_ICON_LOCK:
         (GOOD_ICON_CACHE if ok else BAD_ICON_CACHE).add(url)
     return ok
-EPG_XML_INDEX_VERSION = 'kingIPTV_epg_v2'
-EPG_INDEX_MEMORY = {}
-EPG_INDEX_LOCK = threading.Lock()
-EPG_ACTIVE = set()
-EPG_ACTIVE_LOCK = threading.Lock()
-USER_AGENT = (
-    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
-    'AppleWebKit/537.36 (KHTML, like Gecko) Chrome/132.0.0.0 Safari/537.36'
-)
-
-def get_user_agent():
-    return USER_AGENT
 
 EPG_SOURCE_XTREAM = 1
 
