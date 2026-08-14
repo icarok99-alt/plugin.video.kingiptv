@@ -18,6 +18,28 @@ IPTV_PROBLEM_LOG = translate(os.path.join(profile, 'iptv_problems_log.txt'))
 REQUEST_TIMEOUT = 10
 MAX_RETRIES = 1
 CACHE_FAILED_URLS = {}
+BAD_ICON_CACHE = set()
+GOOD_ICON_CACHE = set()
+BAD_ICON_LOCK = threading.Lock()
+ICON_CHECK_TIMEOUT = 2.5
+
+
+def icon_is_reachable(url):
+    if not url:
+        return False
+    with BAD_ICON_LOCK:
+        if url in GOOD_ICON_CACHE:
+            return True
+        if url in BAD_ICON_CACHE:
+            return False
+    try:
+        r = requests.head(url, timeout=ICON_CHECK_TIMEOUT, allow_redirects=True)
+        ok = r.status_code < 400
+    except Exception:
+        ok = False
+    with BAD_ICON_LOCK:
+        (GOOD_ICON_CACHE if ok else BAD_ICON_CACHE).add(url)
+    return ok
 EPG_XML_INDEX_VERSION = 'kingIPTV_epg_v2'
 EPG_INDEX_MEMORY = {}
 EPG_INDEX_LOCK = threading.Lock()
