@@ -101,7 +101,10 @@ MAX_WAIT_FOR_NEW_SEGMENTS = 1.0
 SERVED_IDS_MAX = 400
 TRICKLE_INTERVAL_TARGET = 0.1
 TRICKLE_MIN_TS_PACKETS = 8
-TRICKLE_INITIAL_BURST_SECONDS = 5.0
+TRICKLE_MARGIN_FACTOR = 1.0
+TRICKLE_MAX_MARGIN_FACTOR = 2.0
+TRICKLE_MARGIN_FLOOR_SECONDS = 3.0
+TRICKLE_MARGIN_CEIL_SECONDS = 15.0
 
 MAX_ACTIVE_CHANNEL_STREAMS = 12
 MAX_CONCURRENT_HANDLERS = 20
@@ -495,12 +498,25 @@ class UnifiedProxy:
     def _segment_id(url):
         return url.split('/')[-1].split('?')[0]
 
-    def _trickle_write(self, safe_write, data, duration, is_client_alive, pacing):
+    @staticmethod
+    def _margin_from_target_duration(target_duration):
+        base = target_duration if target_duration and target_duration > 0 else MIN_REFRESH_INTERVAL
+        target_margin = base * TRICKLE_MARGIN_FACTOR
+        target_margin = max(TRICKLE_MARGIN_FLOOR_SECONDS, min(target_margin, TRICKLE_MARGIN_CEIL_SECONDS))
+        max_margin = base * TRICKLE_MAX_MARGIN_FACTOR
+        max_margin = max(target_margin, min(max_margin, TRICKLE_MARGIN_CEIL_SECONDS * TRICKLE_MAX_MARGIN_FACTOR))
+        return target_margin, max_margin
+
+    def _trickle_write(self, safe_write, data, duration, is_client_alive, pacing, target_duration=None):
         total_len = len(data)
         if total_len == 0:
             return True
         if not duration or duration <= 0:
             duration = MIN_REFRESH_INTERVAL
+
+        target_margin, max_margin = self._margin_from_target_duration(
+            target_duration if target_duration else duration
+        )
 
         target_chunks = max(1, int(duration / TRICKLE_INTERVAL_TARGET))
         raw_chunk_size = max(1, total_len // target_chunks)
@@ -523,8 +539,12 @@ class UnifiedProxy:
             pacing['duration_sent'] += chunk_duration
             elapsed = time.time() - pacing['session_start']
             ahead = pacing['duration_sent'] - elapsed
-            if ahead > 0:
-                time.sleep(min(ahead, chunk_duration * 4))
+            excess = ahead - target_margin
+            if excess > 0:
+                time.sleep(min(excess, chunk_duration * 4))
+            capped_ahead = min(ahead, max_margin)
+            if capped_ahead != ahead:
+                pacing['duration_sent'] = elapsed + capped_ahead
         return True
 
     @staticmethod
@@ -554,6 +574,7 @@ class UnifiedProxy:
         if not safe_write(header.encode()):
             return True
 
+        leftover = bytearray()
         pacing = {'session_start': None, 'duration_sent': 0.0}
 
         initial_segments = self._segments_with_seq(state)
@@ -726,11 +747,22 @@ class UnifiedProxy:
                     start_prefetch(queue[0][0])
 
                 if data:
+                    if leftover:
+                        data = bytes(leftover) + data
+                        leftover = bytearray()
+                    usable_len = len(data) - (len(data) % 188)
+                    if usable_len < len(data):
+                        leftover = bytearray(data[usable_len:])
+                        data = data[:usable_len]
                     duration = seg_dur or state.get('target_duration')
+                    target_duration = state.get('target_duration')
                     if pacing['session_start'] is None:
                         pacing['session_start'] = time.time()
-                        pacing['duration_sent'] = -TRICKLE_INITIAL_BURST_SECONDS
-                    ok = self._trickle_write(safe_write, data, duration, is_client_alive, pacing)
+                        initial_margin, _ = self._margin_from_target_duration(target_duration)
+                        pacing['duration_sent'] = -initial_margin
+                    ok = self._trickle_write(
+                        safe_write, data, duration, is_client_alive, pacing, target_duration
+                    ) if data else True
                     if not ok:
                         return True, 'ok'
                     mark_served(seg_url, seg_seq)
