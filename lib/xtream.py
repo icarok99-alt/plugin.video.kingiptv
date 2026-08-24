@@ -6,6 +6,7 @@ import hashlib
 import json
 import datetime
 import threading
+import concurrent.futures
 import requests
 from requests.adapters import HTTPAdapter
 from requests.packages.urllib3.util.retry import Retry
@@ -18,10 +19,6 @@ IPTV_PROBLEM_LOG = translate(os.path.join(profile, 'iptv_problems_log.txt'))
 REQUEST_TIMEOUT = 10
 MAX_RETRIES = 1
 CACHE_FAILED_URLS = {}
-BAD_ICON_CACHE = set()
-GOOD_ICON_CACHE = set()
-BAD_ICON_LOCK = threading.Lock()
-ICON_CHECK_TIMEOUT = 2.5
 EPG_XML_INDEX_VERSION = 'kingIPTV_epg_v2'
 EPG_INDEX_MEMORY = {}
 EPG_INDEX_LOCK = threading.Lock()
@@ -34,23 +31,6 @@ USER_AGENT = (
 
 def get_user_agent():
     return USER_AGENT
-
-def icon_is_reachable(url):
-    if not url:
-        return False
-    with BAD_ICON_LOCK:
-        if url in GOOD_ICON_CACHE:
-            return True
-        if url in BAD_ICON_CACHE:
-            return False
-    try:
-        r = requests.head(url, timeout=ICON_CHECK_TIMEOUT, allow_redirects=True)
-        ok = r.status_code < 400
-    except Exception:
-        ok = False
-    with BAD_ICON_LOCK:
-        (GOOD_ICON_CACHE if ok else BAD_ICON_CACHE).add(url)
-    return ok
 
 EPG_SOURCE_XTREAM = 1
 
@@ -89,6 +69,66 @@ def create_session():
     session.mount('https://', adapter)
     session.headers.update({'User-Agent': get_user_agent()})
     return session
+
+ICON_CHECK_CACHE = {}
+ICON_CHECK_LOCK = threading.Lock()
+ICON_CHECK_TTL = 21600
+ICON_CHECK_TIMEOUT = 4
+ICON_CHECK_MAX_WORKERS = 12
+
+
+def _icon_url_is_reachable(url):
+    headers = {'User-Agent': get_user_agent()}
+    try:
+        resp = requests.head(url, timeout=ICON_CHECK_TIMEOUT, allow_redirects=True, headers=headers)
+        if resp.status_code in (405, 501):
+            raise ValueError('HEAD nao suportado pelo servidor')
+        if resp.status_code >= 400:
+            return False
+        ctype = (resp.headers.get('Content-Type') or '').lower()
+        return (not ctype) or ctype.startswith('image')
+    except Exception:
+        try:
+            resp = requests.get(url, timeout=ICON_CHECK_TIMEOUT, stream=True, headers=headers)
+            ok = resp.status_code < 400
+            resp.close()
+            return ok
+        except Exception:
+            return False
+
+
+def icon_url_is_valid(url):
+    if not url:
+        return False
+    now = time.time()
+    with ICON_CHECK_LOCK:
+        cached = ICON_CHECK_CACHE.get(url)
+        if cached and (now - cached[1]) < ICON_CHECK_TTL:
+            return cached[0]
+    ok = _icon_url_is_reachable(url)
+    with ICON_CHECK_LOCK:
+        ICON_CHECK_CACHE[url] = (ok, now)
+    return ok
+
+
+def validate_channel_icons(channels):
+    urls = sorted({c['icon'] for c in channels if c.get('icon')})
+    if not urls:
+        return
+    results = {}
+    with concurrent.futures.ThreadPoolExecutor(max_workers=ICON_CHECK_MAX_WORKERS) as pool:
+        future_map = {pool.submit(icon_url_is_valid, u): u for u in urls}
+        for future in concurrent.futures.as_completed(future_map):
+            u = future_map[future]
+            try:
+                results[u] = future.result()
+            except Exception:
+                results[u] = False
+    for c in channels:
+        icon = c.get('icon')
+        if icon and not results.get(icon, False):
+            c['icon'] = ''
+
 
 def log_iptv_problem(url, error_msg=''):
     try:
@@ -133,6 +173,17 @@ def first_clean_text(data, *keys):
         if value:
             return value
     return ''
+
+def normalize_icon_url(value):
+    text = clean_text(value)
+    if not text or any(ord(char) < 32 for char in text) or any(char.isspace() for char in text):
+        return ''
+    lower = text.lower()
+    if lower.startswith(('special://', 'file://', '/')):
+        return text
+    if not re.match(r'^https?://[^/\s]+(?:/[^\s]*)?$', text, re.I):
+        return ''
+    return text
 
 EMOJI_PATTERN = re.compile(
     "["
@@ -193,7 +244,7 @@ def clean_category_name(name):
 
 SUPERSCRIPTS = '¹²³⁴⁵⁶⁷⁸⁹⁰'
 
-QUALITY_TAGS = ['FHDR', 'FHD\\+', 'FHD', 'UHD', 'HD\\+', 'HD', 'SD', '4K', 'ALT']
+QUALITY_TAGS = ['FHDR', 'FHD\\+', 'FHD', 'UHD', 'HD\\+', 'HD', 'SD', '4K', 'ALTER', 'ALT']
 CODEC_TAGS = ['H265', 'H264', 'HEVC', 'AVC', 'X265', 'X264']
 RESOLUTION_TAGS = QUALITY_TAGS + CODEC_TAGS
 
@@ -1038,7 +1089,7 @@ def parselist(url):
     return iptv
 
 class API:
-    def __init__(self, dns, username, password, hide_adult='true', quality_mode='1080p'):
+    def __init__(self, dns, username, password, quality_mode='1080p'):
         if not username or not password:
             raise ValueError('Username e password são obrigatórios')
         self.dns = dns
@@ -1046,11 +1097,8 @@ class API:
         self.password = password
         self.player_api = '{}/player_api.php?username={}&password={}'.format(dns, username, password)
         self.play_url = '{}/live/{}/{}/'.format(dns, username, password)
-        self.play_movies = '{}/movie/{}/{}/'.format(dns, username, password)
-        self.play_series = '{}/series/{}/{}/'.format(dns, username, password)
         self.adult_tags = ['xxx', 'xXx', 'XXX', 'adult', 'Adult', 'ADULT',
                            'porn', 'Porn', 'PORN', 'teste', 'TESTE', 'Teste']
-        self.hide_adult = hide_adult
         self.quality_mode = quality_mode
         self.session = create_session()
     def b64(self, obj):
@@ -1065,9 +1113,14 @@ class API:
     def is_adult(self, name):
         return any(s in name for s in self.adult_tags)
     def allow(self, name):
-        if self.hide_adult == 'false':
-            return True
-        return not self.is_adult(name)
+        return True
+    def unlock_adult(self, category_name=''):
+        try:
+            from lib import parental
+            return parental.ensure_access(category_name)
+        except Exception as e:
+            log_iptv_problem('parental_control', 'Erro ao verificar controle parental: {}'.format(e))
+            return False
     def http(self, url='', mode=None):
         try:
             if not mode:
@@ -1100,7 +1153,7 @@ class API:
                 try:
                     name = clean_category_name(cat.get('category_name', ''))
                     cat_id = cat.get('category_id', '')
-                    if not cat_id or not name or 'All' in name or not self.allow(name):
+                    if not cat_id or not name or 'All' in name:
                         continue
                     url = '{}&action=get_live_streams&category_id={}'.format(
                         self.player_api, cat_id
@@ -1117,8 +1170,10 @@ class API:
                     'timestamp': time.time()
                 }
         return itens
-    def channels_open_epg(self, url):
+    def channels_open_epg(self, url, category_name=''):
         result = []
+        if category_name and self.is_adult(category_name) and not self.unlock_adult(category_name):
+            return result
         json_data = self.http(url, 'json_url')
         if not json_data:
             return result
@@ -1130,7 +1185,7 @@ class API:
                 if not stream_id:
                     continue
                 url_ = '{}{}.m3u8'.format(self.play_url, stream_id)
-                thumb = clean_text(stream.get('stream_icon', ''))
+                thumb = normalize_icon_url(stream.get('stream_icon', ''))
                 epg_channel_id = stream.get('epg_channel_id') or ''
                 result.append({
                     'name': name, 'icon': thumb, 'url': url_,
@@ -1168,112 +1223,5 @@ class API:
         category_epg_ids = [c.get('epg_channel_id') for c in filtered if c.get('epg_channel_id')]
         if category_epg_ids:
             build_epg_for_channels(self.dns, self.username, self.password, category_epg_ids)
+        validate_channel_icons(filtered)
         return filtered
-    def series_cat(self):
-        itens = []
-        url_ser = '{}&action=get_series_categories'.format(self.player_api)
-        vod_cat = self.http(url_ser, 'json_url')
-        if not vod_cat:
-            return itens
-        for cat in vod_cat:
-            try:
-                name = clean_category_name(cat.get('category_name', ''))
-                if not name or not self.allow(name):
-                    continue
-                url = '{}&action=get_series&category_id={}'.format(
-                    self.player_api, cat['category_id']
-                )
-                itens.append((name, url))
-            except Exception:
-                continue
-        return itens
-    def series_list(self, url):
-        itens = []
-        ser_cat = self.http(url, 'json_url')
-        if not ser_cat:
-            return itens
-        for ser in ser_cat:
-            try:
-                name = first_clean_text(ser, 'name', 'title')
-                series_id = ser.get('series_id', '')
-                if not series_id or not name:
-                    continue
-                url_ = '{}&action=get_series_info&series_id={}'.format(
-                    self.player_api, str(series_id)
-                )
-                thumb = clean_text(ser.get('cover', ''))
-                background = clean_text(
-                    ser.get('backdrop_path', [''])[0]
-                    if isinstance(ser.get('backdrop_path'), list)
-                    else ''
-                )
-                plot = clean_text(first_clean_text(ser, 'plot', 'description', 'overview'))
-                releaseDate = clean_text(first_clean_text(ser, 'releaseDate', 'release_date', 'premiered'))
-                cast = str(clean_text(ser.get('cast', ''))).split()
-                rating_5based = clean_text(str(ser.get('rating_5based', '') or ser.get('rating', '')))
-                episode_run_time = clean_text(str(ser.get('episode_run_time', '')))
-                genre = clean_text(first_clean_text(ser, 'genre', 'genres'))
-                itens.append((name, url_, thumb, background, plot,
-                              releaseDate, cast, rating_5based, episode_run_time, genre))
-            except Exception:
-                continue
-        return itens
-    def series_seasons(self, url):
-        itens = []
-        ser_cat = self.http(url, 'json_url')
-        if not ser_cat or 'episodes' not in ser_cat:
-            return itens
-        try:
-            info = ser_cat.get('info', {})
-            thumb = clean_text(info.get('cover', ''))
-            background = clean_text(
-                info.get('backdrop_path', [''])[0]
-                if isinstance(info.get('backdrop_path'), list)
-                else ''
-            )
-            for ser in ser_cat['episodes']:
-                try:
-                    name = 'Season - ' + str(ser)
-                    url_ = '{}&season_number={}'.format(url, str(ser))
-                    itens.append((name, url_, thumb, background))
-                except Exception:
-                    continue
-        except Exception as e:
-            log_iptv_problem(url, 'Erro ao obter temporadas: {}'.format(e))
-        return itens
-    def season_list(self, url):
-        itens = []
-        ser_cat = self.http(url, 'json_url')
-        if not ser_cat or 'episodes' not in ser_cat:
-            return itens
-        try:
-            info = ser_cat.get('info', {})
-            episodes = ser_cat['episodes']
-            parsed = urlparse(url)
-            season_number = str(parse_qs(parsed.query)['season_number'][0])
-            if season_number not in episodes:
-                return itens
-            for ser in episodes[season_number]:
-                try:
-                    episode_id = ser.get('id', '')
-                    extension = clean_text(ser.get('container_extension', 'mp4')) or 'mp4'
-                    if not episode_id:
-                        continue
-                    play_url = '{}{}.{}'.format(self.play_series, str(episode_id), extension)
-                    name = first_clean_text(ser, 'title', 'name')
-                    ep_info = ser.get('info', {})
-                    thumb = clean_text(ep_info.get('movie_image', ''))
-                    background = thumb
-                    plot = clean_text(first_clean_text(ep_info, 'plot', 'description', 'overview'))
-                    releasedate = clean_text(first_clean_text(ep_info, 'releasedate', 'release_date', 'aired'))
-                    cast = str(clean_text(info.get('cast', ''))).split()
-                    rating = clean_text(str(info.get('rating_5based', '') or info.get('rating', '')))
-                    duration = clean_text(str(ep_info.get('duration', '') or ep_info.get('duration_secs', '')))
-                    genre = clean_text(first_clean_text(info, 'genre', 'genres'))
-                    itens.append((name, play_url, thumb, background, plot,
-                                  releasedate, cast, rating, duration, genre))
-                except Exception:
-                    continue
-        except Exception as e:
-            log_iptv_problem(url, 'Erro ao listar episódios: {}'.format(e))
-        return itens

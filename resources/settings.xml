@@ -3,9 +3,6 @@
 <category label="TV Ao Vivo">
         <setting id="live_quality_mode" type="enum" values="1080p (Full HD) - Padrão|720p (HD) - Internet lenta" default="0" label="Qualidade dos canais ao vivo"/>
         <setting id="epg_source" type="enum" values="Desativado|Xtream Codes|Pluto TV" default="0" label="Baixar guia de programação (EPG)"/>
-        <setting id="adult_unlocked" type="bool" default="false" visible="false"/>
-        <setting label="Desbloquear canais adultos" type="action" action="RunScript(special://home/addons/plugin.video.kingiptv/lib/parental.py,unlock)" option="close"/>
-        <setting label="Bloquear canais adultos novamente" type="action" action="RunScript(special://home/addons/plugin.video.kingiptv/lib/parental.py,lock)" option="close"/>
     </category>
     <category label="Up Next">
         <setting id="upnext_enabled" type="bool" label="Ativar Up Next" default="true"/>

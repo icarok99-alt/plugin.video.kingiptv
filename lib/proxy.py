@@ -15,11 +15,15 @@ import gzip
 import zlib
 import socketserver
 import http.client
-import concurrent.futures
+import queue
 try:
     import xbmcvfs
 except ImportError:
     xbmcvfs = None
+try:
+    import xbmc
+except ImportError:
+    xbmc = None
 
 PROXY_PORT_POOL = [57845, 57846, 57847, 57848, 57849, 57850]
 PROXY_PORT = PROXY_PORT_POOL[0]
@@ -90,21 +94,22 @@ MAX_RETRIES = 3
 RETRY_DELAY = 0.3
 BUFFER_SIZE = 65536
 
-SEGMENT_INLINE_RETRIES = 3
+SEGMENT_INLINE_RETRIES = 1
 SEGMENT_INLINE_RETRY_DELAY = 0.3
 
 PLAYLIST_FETCH_TIMEOUT = 10
-SEGMENT_FETCH_TIMEOUT = 15
+READY_QUEUE_MAXSIZE = 3
+SEGMENT_FETCH_TIMEOUT = 6
+SEGMENT_MAX_RETRIES = 1
 
 MIN_REFRESH_INTERVAL = 2.0
 MAX_WAIT_FOR_NEW_SEGMENTS = 1.0
+MAX_STALL_WITHOUT_PROGRESS_SECONDS = 15.0
 SERVED_IDS_MAX = 400
-TRICKLE_INTERVAL_TARGET = 0.1
+TRICKLE_INTERVAL_TARGET = 0.2
 TRICKLE_MIN_TS_PACKETS = 8
-TRICKLE_MARGIN_FACTOR = 1.0
-TRICKLE_MAX_MARGIN_FACTOR = 2.0
-TRICKLE_MARGIN_FLOOR_SECONDS = 3.0
-TRICKLE_MARGIN_CEIL_SECONDS = 15.0
+MAX_PACING_AHEAD_SECONDS = 1.5
+MAX_PACING_BEHIND_SECONDS = 2.0
 
 MAX_ACTIVE_CHANNEL_STREAMS = 12
 MAX_CONCURRENT_HANDLERS = 20
@@ -116,6 +121,12 @@ SOCKET_STREAM_TIMEOUT = 10
 EXTINF_RE = re.compile(r'#EXTINF:\s*([\d.]+)')
 TARGETDURATION_RE = re.compile(r'#EXT-X-TARGETDURATION:\s*(\d+(?:\.\d+)?)')
 MEDIA_SEQUENCE_RE = re.compile(r'#EXT-X-MEDIA-SEQUENCE:\s*(\d+)')
+HOLD_BACK_RE = re.compile(r'(?<!PART-)HOLD-BACK=([\d.]+)')
+START_TIME_OFFSET_RE = re.compile(r'TIME-OFFSET=(-?[\d.]+)')
+
+SERVER_HOLD_BACK_MULTIPLIER = 3.0
+DEFAULT_LIVE_DELAY_SECONDS = 6.0
+
 
 AUTH_ERROR_CODES = {401, 403}
 NOT_FOUND_CODES = {404, 410}
@@ -254,21 +265,219 @@ class ConnectionPool:
             pass
 
 
+class _LiveFeeder:
+    def __init__(self, proxy, channel_key, playlist_url, headers, state, is_client_alive,
+                 client_sock=None, client_gone=None):
+        self.proxy = proxy
+        self.channel_key = channel_key
+        self.playlist_url = playlist_url
+        self.headers = headers
+        self.state = state
+        self.is_client_alive = is_client_alive
+        self.client_sock = client_sock
+        self.client_gone = client_gone
+
+        self.stop_event = threading.Event()
+        self.ready = queue.Queue(maxsize=READY_QUEUE_MAXSIZE)
+        self.error_kind = [None]
+
+        self.served_set = set()
+        self.served_ids = deque()
+        self.last_served_seq = None
+
+    def stop(self):
+        self.stop_event.set()
+
+    def _peek_disconnected(self):
+        if self.client_sock is None or self.client_gone is None:
+            return False
+        original_timeout = None
+        try:
+            original_timeout = self.client_sock.gettimeout()
+            self.client_sock.settimeout(0.01)
+            peek = self.client_sock.recv(1, socket.MSG_PEEK)
+            if peek == b'':
+                self.client_gone[0] = True
+                return True
+        except (BlockingIOError, socket.timeout):
+            pass
+        except (ConnectionResetError, ConnectionAbortedError, OSError):
+            self.client_gone[0] = True
+            return True
+        finally:
+            try:
+                self.client_sock.settimeout(original_timeout)
+            except Exception:
+                pass
+        return False
+
+    def _mark_served(self, seg_url, seq):
+        sid = self.proxy._segment_id(seg_url)
+        self.served_set.add(sid)
+        self.served_ids.append(sid)
+        if len(self.served_ids) > SERVED_IDS_MAX:
+            old = self.served_ids.popleft()
+            self.served_set.discard(old)
+        if seq is not None and (self.last_served_seq is None or seq > self.last_served_seq):
+            self.last_served_seq = seq
+
+    def _new_segments(self, candidate_state):
+        candidates = self.proxy._segments_with_seq(candidate_state)
+        has_seq = self.last_served_seq is not None and any(s is not None for _, _, s in candidates)
+        if has_seq:
+            max_seq = max((c[2] for c in candidates if c[2] is not None), default=None)
+            if max_seq is not None and max_seq < self.last_served_seq:
+                self.last_served_seq = None
+                self.served_set.clear()
+                self.served_ids.clear()
+                return self.proxy._segments_from_live_edge(candidate_state)
+            return [c for c in candidates if c[2] is not None and c[2] > self.last_served_seq]
+        return [c for c in candidates if self.proxy._segment_id(c[0]) not in self.served_set]
+
+    def _content_wait_seconds(self, empty_streak):
+        target = (self.state.get('target_duration') if self.state else None) or MIN_REFRESH_INTERVAL
+        base = max(MIN_REFRESH_INTERVAL, target * 0.5)
+        return min(base * (1 + 0.25 * empty_streak), target)
+
+    def _refresh(self):
+        new_state, kind = self.proxy.get_or_refresh_playlist(
+            self.channel_key, self.playlist_url, self.headers, force=True
+        )
+        return new_state, kind
+
+    def _fetch_loop(self):
+        pending = deque(self.proxy._segments_from_live_edge(self.state))
+        stall_since = None
+        empty_streak = 0
+        auth_failures = 0
+
+        while not self.stop_event.is_set() and self.is_client_alive():
+            if not pending:
+                if self._peek_disconnected():
+                    return
+                new_state, kind = self._refresh()
+                if kind in ('auth', 'blocked'):
+                    auth_failures += 1
+                    if auth_failures > MAX_CONSECUTIVE_AUTH_FAILURES:
+                        self.error_kind[0] = kind
+                        self.stop_event.set()
+                        return
+                else:
+                    auth_failures = 0
+
+                candidate_state = new_state or self.state
+                new_segments = self._new_segments(candidate_state)
+                if not new_segments:
+                    now = time.time()
+                    if stall_since is None:
+                        stall_since = now
+                    elif now - stall_since > MAX_STALL_WITHOUT_PROGRESS_SECONDS:
+                        self.last_served_seq = None
+                        self.served_set.clear()
+                        self.served_ids.clear()
+                        pending = deque(self.proxy._segments_from_live_edge(candidate_state))
+                        stall_since = None
+                        empty_streak = 0
+                        self.state = candidate_state
+                        continue
+                    empty_streak += 1
+                    wait_s = self._content_wait_seconds(empty_streak)
+                    self.stop_event.wait(wait_s)
+                    continue
+
+                stall_since = None
+                empty_streak = 0
+                self.state = candidate_state
+                pending = deque(new_segments)
+                continue
+
+            seg_url, seg_dur, seg_seq = pending.popleft()
+            data, seg_kind = self.proxy.download_segment(seg_url, self.headers)
+
+            if not data and seg_kind not in ('auth', 'blocked', 'not_found'):
+                for _ in range(SEGMENT_INLINE_RETRIES):
+                    if self.stop_event.is_set() or not self.is_client_alive():
+                        return
+                    time.sleep(SEGMENT_INLINE_RETRY_DELAY)
+                    data, seg_kind = self.proxy.download_segment(seg_url, self.headers)
+                    if data or seg_kind in ('auth', 'not_found', 'blocked'):
+                        break
+
+            if not data:
+                if seg_kind in ('auth', 'blocked'):
+                    auth_failures += 1
+                    if auth_failures > MAX_CONSECUTIVE_AUTH_FAILURES:
+                        self.error_kind[0] = seg_kind
+                        self.stop_event.set()
+                        return
+                continue
+
+            auth_failures = 0
+            self._mark_served(seg_url, seg_seq)
+
+            while not self.stop_event.is_set() and self.is_client_alive():
+                try:
+                    self.ready.put((seg_dur, data), timeout=1.0)
+                    break
+                except queue.Full:
+                    continue
+
+    def run(self, safe_write):
+        fetch_thread = threading.Thread(
+            target=self._fetch_loop, name='iptvproxy-fetch', daemon=True
+        )
+        fetch_thread.start()
+
+        pacing = {'session_start': None, 'duration_sent': 0.0}
+        try:
+            while self.is_client_alive():
+                self.proxy.channel_last_active[self.channel_key] = time.time()
+                try:
+                    seg_dur, data = self.ready.get(timeout=1.0)
+                except queue.Empty:
+                    if not fetch_thread.is_alive():
+                        break
+                    continue
+
+                duration = seg_dur or self.state.get('target_duration')
+                if pacing['session_start'] is None:
+                    ok = safe_write(memoryview(data))
+                    pacing['session_start'] = time.time()
+                    pacing['duration_sent'] = duration or 0.0
+                else:
+                    ok = self.proxy._trickle_write(
+                        safe_write, data, duration, self.is_client_alive, pacing
+                    )
+                if not ok:
+                    return True, 'ok'
+
+            if self.error_kind[0]:
+                return False, self.error_kind[0]
+            return True, 'ok'
+        finally:
+            self.stop_event.set()
+            fetch_thread.join(timeout=2)
+
+
 class UnifiedProxy:
     def __init__(self):
         self.ssl_context = ssl.create_default_context()
         self.ssl_context.check_hostname = False
         self.ssl_context.verify_mode = ssl.CERT_NONE
         self.conn_pool = ConnectionPool(self.ssl_context)
+
         self.channel_ua_cache = {}
         self.channel_ua_lock = threading.Lock()
+
         self.playlist_lock = threading.Lock()
         self.playlist_state = {}
         self.channel_last_active = {}
+
         self.active_streams = 0
         self.active_streams_lock = threading.Lock()
         self.active_handlers = 0
         self.active_handlers_lock = threading.Lock()
+
         self.maintenance_started = False
         self.maintenance_lock = threading.Lock()
 
@@ -402,7 +611,7 @@ class UnifiedProxy:
 
     def download_segment(self, url, headers):
         data, _final_url, _status, kind = self._fetch_url(
-            url, headers, timeout=SEGMENT_FETCH_TIMEOUT, max_retries=MAX_RETRIES
+            url, headers, timeout=SEGMENT_FETCH_TIMEOUT, max_retries=SEGMENT_MAX_RETRIES
         )
         if not data:
             return None, kind
@@ -414,6 +623,8 @@ class UnifiedProxy:
         segments = []
         target_duration = None
         media_sequence = None
+        hold_back = None
+        start_offset = None
         pending_duration = None
         for raw_line in playlist_text.split('\n'):
             line = raw_line.strip()
@@ -435,6 +646,22 @@ class UnifiedProxy:
                     except Exception:
                         pass
                 continue
+            if line.startswith('#EXT-X-SERVER-CONTROL'):
+                m = HOLD_BACK_RE.search(line)
+                if m:
+                    try:
+                        hold_back = float(m.group(1))
+                    except Exception:
+                        pass
+                continue
+            if line.startswith('#EXT-X-START'):
+                m = START_TIME_OFFSET_RE.search(line)
+                if m:
+                    try:
+                        start_offset = float(m.group(1))
+                    except Exception:
+                        pass
+                continue
             if line.startswith('#EXTINF'):
                 m = EXTINF_RE.search(line)
                 if m:
@@ -449,7 +676,7 @@ class UnifiedProxy:
             if absolute.startswith(('http://', 'https://')):
                 segments.append((absolute, pending_duration))
             pending_duration = None
-        return segments, target_duration, media_sequence
+        return segments, target_duration, media_sequence, hold_back, start_offset
 
     def fetch_playlist(self, url, headers):
         data, final_url, _status, kind = self._fetch_url(
@@ -477,17 +704,22 @@ class UnifiedProxy:
             return state, kind
 
         base_url = (final_url or url).rsplit('/', 1)[0]
-        segments, target_duration, media_sequence = self._parse_playlist(text, base_url)
+        segments, target_duration, media_sequence, hold_back, start_offset = \
+            self._parse_playlist(text, base_url)
         if not segments:
             return state, 'empty'
 
         total_duration = sum(d for _, d in segments if d is not None)
+        live_delay = self._resolve_live_delay(target_duration, hold_back, start_offset, total_duration)
 
         new_state = {
             'segments': segments,
             'target_duration': target_duration,
             'total_duration': total_duration,
             'media_sequence': media_sequence,
+            'hold_back': hold_back,
+            'start_offset': start_offset,
+            'live_delay': live_delay,
             'last_fetch_ts': time.time(),
         }
         with self.playlist_lock:
@@ -495,28 +727,49 @@ class UnifiedProxy:
         return new_state, 'ok'
 
     @staticmethod
+    def _resolve_live_delay(target_duration, hold_back, start_offset, total_duration):
+        if hold_back is not None and hold_back > 0:
+            delay = hold_back
+        elif start_offset is not None and start_offset < 0:
+            delay = abs(start_offset)
+        elif target_duration:
+            delay = target_duration * SERVER_HOLD_BACK_MULTIPLIER
+        else:
+            delay = DEFAULT_LIVE_DELAY_SECONDS
+        if total_duration:
+            delay = min(delay, total_duration)
+        return max(delay, 0.0)
+
+    def _segments_from_live_edge(self, state):
+        all_segments = self._segments_with_seq(state)
+        if not all_segments:
+            return all_segments
+
+        live_delay = state.get('live_delay')
+        if not live_delay or live_delay <= 0:
+            return all_segments[-1:]
+
+        target_duration = state.get('target_duration') or MIN_REFRESH_INTERVAL
+        acc = 0.0
+        start_idx = len(all_segments) - 1
+        for i in range(len(all_segments) - 1, -1, -1):
+            _, dur, _ = all_segments[i]
+            acc += dur or target_duration
+            start_idx = i
+            if acc >= live_delay:
+                break
+        return all_segments[start_idx:]
+
+    @staticmethod
     def _segment_id(url):
         return url.split('/')[-1].split('?')[0]
 
-    @staticmethod
-    def _margin_from_target_duration(target_duration):
-        base = target_duration if target_duration and target_duration > 0 else MIN_REFRESH_INTERVAL
-        target_margin = base * TRICKLE_MARGIN_FACTOR
-        target_margin = max(TRICKLE_MARGIN_FLOOR_SECONDS, min(target_margin, TRICKLE_MARGIN_CEIL_SECONDS))
-        max_margin = base * TRICKLE_MAX_MARGIN_FACTOR
-        max_margin = max(target_margin, min(max_margin, TRICKLE_MARGIN_CEIL_SECONDS * TRICKLE_MAX_MARGIN_FACTOR))
-        return target_margin, max_margin
-
-    def _trickle_write(self, safe_write, data, duration, is_client_alive, pacing, target_duration=None):
+    def _trickle_write(self, safe_write, data, duration, is_client_alive, pacing):
         total_len = len(data)
         if total_len == 0:
             return True
         if not duration or duration <= 0:
             duration = MIN_REFRESH_INTERVAL
-
-        target_margin, max_margin = self._margin_from_target_duration(
-            target_duration if target_duration else duration
-        )
 
         target_chunks = max(1, int(duration / TRICKLE_INTERVAL_TARGET))
         raw_chunk_size = max(1, total_len // target_chunks)
@@ -531,6 +784,14 @@ class UnifiedProxy:
 
         n = len(offsets)
         chunk_duration = duration / n
+
+        elapsed = time.time() - pacing['session_start']
+        ahead = pacing['duration_sent'] - elapsed
+        if ahead > MAX_PACING_AHEAD_SECONDS:
+            pacing['duration_sent'] = elapsed + MAX_PACING_AHEAD_SECONDS
+        elif ahead < -MAX_PACING_BEHIND_SECONDS:
+            pacing['duration_sent'] = elapsed - MAX_PACING_BEHIND_SECONDS
+
         for start, end in offsets:
             if not is_client_alive():
                 return False
@@ -539,12 +800,8 @@ class UnifiedProxy:
             pacing['duration_sent'] += chunk_duration
             elapsed = time.time() - pacing['session_start']
             ahead = pacing['duration_sent'] - elapsed
-            excess = ahead - target_margin
-            if excess > 0:
-                time.sleep(min(excess, chunk_duration * 4))
-            capped_ahead = min(ahead, max_margin)
-            if capped_ahead != ahead:
-                pacing['duration_sent'] = elapsed + capped_ahead
+            if ahead > 0:
+                time.sleep(min(ahead, chunk_duration * 4))
         return True
 
     @staticmethod
@@ -572,208 +829,16 @@ class UnifiedProxy:
             "\r\n"
         )
         if not safe_write(header.encode()):
-            return True
-
-        leftover = bytearray()
-        pacing = {'session_start': None, 'duration_sent': 0.0}
-
-        initial_segments = self._segments_with_seq(state)
-
-        queue = deque(initial_segments)
-        served_ids = deque()
-        served_set = set()
-        last_served_seq = [None]
-        segment_index = [0]
-
-        refresh_box = {'future': None, 'triggered_at': None}
-        next_holder = {'url': None, 'future': None}
-        empty_refresh_streak = [0]
-        consecutive_auth_failures = [0]
-
-        def start_prefetch(seg_url):
-            next_holder['url'] = seg_url
-            next_holder['future'] = executor.submit(self.download_segment, seg_url, headers)
-
-        def mark_served(seg_url, seq):
-            sid = self._segment_id(seg_url)
-            served_set.add(sid)
-            served_ids.append(sid)
-            if len(served_ids) > SERVED_IDS_MAX:
-                old = served_ids.popleft()
-                served_set.discard(old)
-            if seq is not None:
-                if last_served_seq[0] is None or seq > last_served_seq[0]:
-                    last_served_seq[0] = seq
-
-        def filter_new(candidate_state):
-            candidates = self._segments_with_seq(candidate_state)
-            has_seq = last_served_seq[0] is not None and any(s is not None for _, _, s in candidates)
-            if has_seq:
-                max_candidate_seq = max(
-                    (c[2] for c in candidates if c[2] is not None), default=None
-                )
-                if max_candidate_seq is not None and max_candidate_seq <= last_served_seq[0]:
-                    last_served_seq[0] = None
-                    served_set.clear()
-                    served_ids.clear()
-                    return candidates
-                return [c for c in candidates if c[2] is not None and c[2] > last_served_seq[0]]
-            return [c for c in candidates if self._segment_id(c[0]) not in served_set]
-
-        executor = concurrent.futures.ThreadPoolExecutor(
-            max_workers=2, thread_name_prefix='iptvproxy'
-        )
-
-        try:
-            if queue:
-                start_prefetch(queue[0][0])
-
-            while is_client_alive():
-                self.channel_last_active[channel_key] = time.time()
-
-                if refresh_box['future'] is None:
-                    last_segment_queued = len(queue) <= 1
-                    if last_segment_queued:
-                        if client_sock is not None and client_gone is not None:
-                            original_timeout = None
-                            try:
-                                original_timeout = client_sock.gettimeout()
-                                client_sock.settimeout(0.01)
-                                peek = client_sock.recv(1, socket.MSG_PEEK)
-                                if peek == b'':
-                                    client_gone[0] = True
-                                    break
-                            except (BlockingIOError, socket.timeout):
-                                pass
-                            except (ConnectionResetError, ConnectionAbortedError, OSError):
-                                client_gone[0] = True
-                                break
-                            finally:
-                                try:
-                                    client_sock.settimeout(original_timeout)
-                                except Exception:
-                                    pass
-
-                        refresh_box['triggered_at'] = time.time()
-                        refresh_box['future'] = executor.submit(
-                            self.get_or_refresh_playlist, channel_key, playlist_url, headers, True
-                        )
-
-                if not queue:
-                    new_state = None
-                    refresh_kind = 'pending'
-                    if refresh_box['future'] is not None:
-                        try:
-                            new_state, refresh_kind = refresh_box['future'].result(timeout=5)
-                        except Exception:
-                            new_state, refresh_kind = None, 'pending'
-                        refresh_box['future'] = None
-                    if new_state is None and refresh_kind not in ('auth', 'blocked'):
-                        new_state, refresh_kind = self.get_or_refresh_playlist(
-                            channel_key, playlist_url, headers, force=True
-                        )
-
-                    if refresh_kind in ('auth', 'blocked'):
-                        consecutive_auth_failures[0] += 1
-                        if consecutive_auth_failures[0] > MAX_CONSECUTIVE_AUTH_FAILURES:
-                            return False, refresh_kind
-                    else:
-                        consecutive_auth_failures[0] = 0
-
-                    candidate_state = new_state or state
-                    new_segments = filter_new(candidate_state)
-                    if not new_segments:
-                        if not is_client_alive():
-                            break
-                        empty_refresh_streak[0] += 1
-                        wait_s = min(
-                            MAX_WAIT_FOR_NEW_SEGMENTS * (1 + 0.5 * (empty_refresh_streak[0] - 1)),
-                            3.0,
-                        )
-                        time.sleep(wait_s)
-                        continue
-                    empty_refresh_streak[0] = 0
-                    state = candidate_state
-                    queue = deque(new_segments)
-                    start_prefetch(queue[0][0])
-                    continue
-
-                seg_url, seg_dur, seg_seq = queue.popleft()
-
-                if next_holder['url'] == seg_url and next_holder['future'] is not None:
-                    try:
-                        data, seg_kind = next_holder['future'].result(timeout=SEGMENT_FETCH_TIMEOUT)
-                    except Exception:
-                        data, seg_kind = None, 'timeout'
-                else:
-                    data, seg_kind = self.download_segment(seg_url, headers)
-                next_holder['url'] = None
-                next_holder['future'] = None
-
-                if not data:
-                    if seg_kind in ('auth', 'blocked'):
-                        consecutive_auth_failures[0] += 1
-                        new_state, refresh_kind = self.get_or_refresh_playlist(
-                            channel_key, playlist_url, headers, force=True
-                        )
-                        if refresh_kind in ('auth', 'blocked') and \
-                                consecutive_auth_failures[0] > MAX_CONSECUTIVE_AUTH_FAILURES:
-                            return False, refresh_kind
-                        if new_state:
-                            state = new_state
-                            new_segments = filter_new(state)
-                            if new_segments:
-                                queue = deque(new_segments)
-                                start_prefetch(queue[0][0])
-                                consecutive_auth_failures[0] = 0
-                                continue
-                    elif seg_kind == 'not_found':
-                        pass
-                    else:
-                        consecutive_auth_failures[0] = 0
-                        for _extra_attempt in range(SEGMENT_INLINE_RETRIES):
-                            if not is_client_alive():
-                                break
-                            time.sleep(SEGMENT_INLINE_RETRY_DELAY)
-                            data, seg_kind = self.download_segment(seg_url, headers)
-                            if data:
-                                break
-                            if seg_kind in ('auth', 'not_found', 'blocked'):
-                                break
-                else:
-                    consecutive_auth_failures[0] = 0
-
-                if queue:
-                    start_prefetch(queue[0][0])
-
-                if data:
-                    if leftover:
-                        data = bytes(leftover) + data
-                        leftover = bytearray()
-                    usable_len = len(data) - (len(data) % 188)
-                    if usable_len < len(data):
-                        leftover = bytearray(data[usable_len:])
-                        data = data[:usable_len]
-                    duration = seg_dur or state.get('target_duration')
-                    target_duration = state.get('target_duration')
-                    if pacing['session_start'] is None:
-                        pacing['session_start'] = time.time()
-                        initial_margin, _ = self._margin_from_target_duration(target_duration)
-                        pacing['duration_sent'] = -initial_margin
-                    ok = self._trickle_write(
-                        safe_write, data, duration, is_client_alive, pacing, target_duration
-                    ) if data else True
-                    if not ok:
-                        return True, 'ok'
-                    mark_served(seg_url, seg_seq)
-                    segment_index[0] += 1
-
             return True, 'ok'
+
+        feeder = _LiveFeeder(
+            self, channel_key, playlist_url, headers, state, is_client_alive,
+            client_sock=client_sock, client_gone=client_gone,
+        )
+        try:
+            return feeder.run(safe_write)
         finally:
-            try:
-                executor.shutdown(wait=False, cancel_futures=True)
-            except TypeError:
-                executor.shutdown(wait=False)
+            feeder.stop()
 
     def _send_error(self, wfile, code, message=""):
         try:
