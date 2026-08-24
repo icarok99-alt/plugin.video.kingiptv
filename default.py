@@ -178,13 +178,14 @@ def home():
         epg_started_for.add(key)
         _start_epg_background_download(active)
 
+    pos = 0
     while True:
         active = list_manager.get_active_list()
         _ensure_epg_for(active)
 
         items = _build_home_items(active)
 
-        selected_query = open_home_menu(items, fanart=ADDON_FANART)
+        selected_query, pos = open_home_menu(items, fanart=ADDON_FANART, start_pos=pos)
         if not selected_query:
             return
         _run(selected_query)

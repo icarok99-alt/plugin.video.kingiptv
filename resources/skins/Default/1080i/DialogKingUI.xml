@@ -1,0 +1,824 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<window>
+
+    <controls>
+
+        <control type="image">
+            <posx>0</posx>
+            <posy>0</posy>
+            <width>1920</width>
+            <height>1080</height>
+            <texture colordiffuse="D9000000">white.png</texture>
+        </control>
+
+<control type="group">
+                <visible>String.IsEqual(Window.Property(king.mode),settings)</visible>
+            <posx>360</posx>
+            <posy>90</posy>
+
+            <control type="image">
+                <posx>0</posx>
+                <posy>0</posy>
+                <width>1200</width>
+                <height>900</height>
+                <texture border="28">epg_panel_bg.png</texture>
+            </control>
+
+            <control type="image">
+                <posx>28</posx>
+                <posy>18</posy>
+                <width>44</width>
+                <height>44</height>
+                <texture>icon.png</texture>
+                <aspectratio>keep</aspectratio>
+            </control>
+
+            <control type="label">
+                <posx>88</posx>
+                <posy>0</posy>
+                <width>800</width>
+                <height>80</height>
+                <aligny>center</aligny>
+                <font>font15_title</font>
+                <textcolor>FFF3B73B</textcolor>
+                <label>$INFO[Window.Property(settings.title)]</label>
+            </control>
+
+            <control type="button" id="4020">
+                <posx>1136</posx>
+                <posy>28</posy>
+                <width>44</width>
+                <height>44</height>
+                <texturenofocus>-</texturenofocus>
+                <texturefocus>-</texturefocus>
+                <label></label>
+                <onup>4020</onup>
+                <ondown>4002</ondown>
+                <onleft>4002</onleft>
+                <onright>4020</onright>
+            </control>
+
+            <control type="image">
+                <posx>1136</posx>
+                <posy>28</posy>
+                <width>32</width>
+                <height>32</height>
+                <texture>icon_close_gold.png</texture>
+            </control>
+
+            <control type="image">
+                <posx>28</posx>
+                <posy>84</posy>
+                <width>1144</width>
+                <height>1</height>
+                <texture colordiffuse="FF3A3A3A">white.png</texture>
+            </control>
+
+            <control type="list" id="4002">
+                <posx>28</posx>
+                <posy>104</posy>
+                <width>340</width>
+                <height>648</height>
+                <onleft>4002</onleft>
+                <onright>4001</onright>
+                <onup>4002</onup>
+                <ondown>4002</ondown>
+                <scrolltime>150</scrolltime>
+                <itemlayout width="340" height="70">
+                    <control type="image">
+                        <posx>0</posx>
+                        <posy>2</posy>
+                        <width>340</width>
+                        <height>66</height>
+                        <texture>epg_item_normal.png</texture>
+                    </control>
+                    <control type="label">
+                        <posx>24</posx>
+                        <posy>0</posy>
+                        <width>292</width>
+                        <height>70</height>
+                        <aligny>center</aligny>
+                        <font>font13</font>
+                        <textcolor>FFE6E6E6</textcolor>
+                        <label>$INFO[ListItem.Label]</label>
+                    </control>
+                </itemlayout>
+                <focusedlayout width="340" height="70">
+                    <control type="image">
+                        <posx>0</posx>
+                        <posy>2</posy>
+                        <width>340</width>
+                        <height>66</height>
+                        <texture>epg_item_normal.png</texture>
+                    </control>
+                    <control type="image">
+                        <posx>0</posx>
+                        <posy>2</posy>
+                        <width>340</width>
+                        <height>66</height>
+                        <texture>epg_item_focused.png</texture>
+                        <visible>Control.HasFocus(4002)</visible>
+                    </control>
+                    <control type="label">
+                        <posx>24</posx>
+                        <posy>0</posy>
+                        <width>292</width>
+                        <height>70</height>
+                        <aligny>center</aligny>
+                        <font>font13</font>
+                        <textcolor>FFFFFFFF</textcolor>
+                        <label>$INFO[ListItem.Label]</label>
+                    </control>
+                </focusedlayout>
+            </control>
+
+            <control type="image">
+                <posx>384</posx>
+                <posy>104</posy>
+                <width>1</width>
+                <height>648</height>
+                <texture colordiffuse="FF3A3A3A">white.png</texture>
+            </control>
+
+            <control type="list" id="4001">
+                <posx>400</posx>
+                <posy>104</posy>
+                <width>772</width>
+                <height>648</height>
+                <onleft>4002</onleft>
+                <onright>4001</onright>
+                <onup>4001</onup>
+                <ondown>4001</ondown>
+                <scrolltime>150</scrolltime>
+                <itemlayout width="772" height="90">
+                    <control type="image">
+                        <posx>0</posx>
+                        <posy>3</posy>
+                        <width>772</width>
+                        <height>84</height>
+                        <texture>epg_item_normal.png</texture>
+                    </control>
+                    <control type="label">
+                        <posx>24</posx>
+                        <posy>0</posy>
+                        <width>288</width>
+                        <height>90</height>
+                        <aligny>center</aligny>
+                        <font>font13</font>
+                        <textcolor>FFE6E6E6</textcolor>
+                        <label>$INFO[ListItem.Label]</label>
+                        <visible>String.IsEqual(ListItem.Property(cyclable),true)</visible>
+                    </control>
+                    <control type="label">
+                        <posx>320</posx>
+                        <posy>0</posy>
+                        <width>374</width>
+                        <height>90</height>
+                        <align>right</align>
+                        <aligny>center</aligny>
+                        <font>font12</font>
+                        <textcolor>FFE6E6E6</textcolor>
+                        <label>$INFO[ListItem.Property(secondary)]</label>
+                        <visible>String.IsEqual(ListItem.Property(cyclable),true)</visible>
+                    </control>
+                    <control type="label">
+                        <posx>24</posx>
+                        <posy>0</posy>
+                        <width>608</width>
+                        <height>90</height>
+                        <aligny>center</aligny>
+                        <font>font13</font>
+                        <textcolor>FFE6E6E6</textcolor>
+                        <label>$INFO[ListItem.Label]</label>
+                        <visible>!String.IsEqual(ListItem.Property(cyclable),true)</visible>
+                    </control>
+                    <control type="label">
+                        <posx>640</posx>
+                        <posy>0</posy>
+                        <width>108</width>
+                        <height>90</height>
+                        <align>right</align>
+                        <aligny>center</aligny>
+                        <font>font12</font>
+                        <textcolor>FFE6E6E6</textcolor>
+                        <label>$INFO[ListItem.Property(secondary)]</label>
+                        <visible>!String.IsEqual(ListItem.Property(cyclable),true)</visible>
+                    </control>
+                    <control type="image">
+                        <posx>702</posx>
+                        <posy>31</posy>
+                        <width>28</width>
+                        <height>28</height>
+                        <texture>icon_chevron_up.png</texture>
+                        <visible>String.IsEqual(ListItem.Property(cyclable),true)</visible>
+                    </control>
+                    <control type="image">
+                        <posx>734</posx>
+                        <posy>31</posy>
+                        <width>28</width>
+                        <height>28</height>
+                        <texture>icon_chevron_down.png</texture>
+                        <visible>String.IsEqual(ListItem.Property(cyclable),true)</visible>
+                    </control>
+                </itemlayout>
+                <focusedlayout width="772" height="90">
+                    <control type="image">
+                        <posx>0</posx>
+                        <posy>3</posy>
+                        <width>772</width>
+                        <height>84</height>
+                        <texture>epg_item_normal.png</texture>
+                    </control>
+                    <control type="image">
+                        <posx>0</posx>
+                        <posy>3</posy>
+                        <width>772</width>
+                        <height>84</height>
+                        <texture>epg_item_focused.png</texture>
+                        <visible>Control.HasFocus(4001)</visible>
+                    </control>
+                    <control type="label">
+                        <posx>24</posx>
+                        <posy>0</posy>
+                        <width>288</width>
+                        <height>90</height>
+                        <aligny>center</aligny>
+                        <font>font13</font>
+                        <textcolor>FFFFFFFF</textcolor>
+                        <label>$INFO[ListItem.Label]</label>
+                        <visible>String.IsEqual(ListItem.Property(cyclable),true)</visible>
+                    </control>
+                    <control type="label">
+                        <posx>320</posx>
+                        <posy>0</posy>
+                        <width>374</width>
+                        <height>90</height>
+                        <align>right</align>
+                        <aligny>center</aligny>
+                        <font>font12</font>
+                        <textcolor>FFFFFFFF</textcolor>
+                        <label>$INFO[ListItem.Property(secondary)]</label>
+                        <visible>String.IsEqual(ListItem.Property(cyclable),true)</visible>
+                    </control>
+                    <control type="label">
+                        <posx>24</posx>
+                        <posy>0</posy>
+                        <width>608</width>
+                        <height>90</height>
+                        <aligny>center</aligny>
+                        <font>font13</font>
+                        <textcolor>FFFFFFFF</textcolor>
+                        <label>$INFO[ListItem.Label]</label>
+                        <visible>!String.IsEqual(ListItem.Property(cyclable),true)</visible>
+                    </control>
+                    <control type="label">
+                        <posx>640</posx>
+                        <posy>0</posy>
+                        <width>108</width>
+                        <height>90</height>
+                        <align>right</align>
+                        <aligny>center</aligny>
+                        <font>font12</font>
+                        <textcolor>FFFFFFFF</textcolor>
+                        <label>$INFO[ListItem.Property(secondary)]</label>
+                        <visible>!String.IsEqual(ListItem.Property(cyclable),true)</visible>
+                    </control>
+                    <control type="image">
+                        <posx>702</posx>
+                        <posy>31</posy>
+                        <width>28</width>
+                        <height>28</height>
+                        <texture>icon_chevron_up.png</texture>
+                        <visible>String.IsEqual(ListItem.Property(cyclable),true)</visible>
+                    </control>
+                    <control type="image">
+                        <posx>734</posx>
+                        <posy>31</posy>
+                        <width>28</width>
+                        <height>28</height>
+                        <texture>icon_chevron_down.png</texture>
+                        <visible>String.IsEqual(ListItem.Property(cyclable),true)</visible>
+                    </control>
+                </focusedlayout>
+            </control>
+
+            <control type="image">
+                <posx>0</posx>
+                <posy>764</posy>
+                <width>1200</width>
+                <height>1</height>
+                <texture colordiffuse="FF3A3A3A">white.png</texture>
+            </control>
+
+            <control type="label">
+                <posx>28</posx>
+                <posy>780</posy>
+                <width>1144</width>
+                <height>60</height>
+                <font>font12</font>
+                <textcolor>FFB0B0B0</textcolor>
+                <label>$INFO[Window.Property(settings.desc)]</label>
+            </control>
+
+        </control>
+
+<control type="group">
+                <visible>String.IsEqual(Window.Property(king.mode),parental)</visible>
+            <posx>725</posx>
+            <posy>280</posy>
+
+            <control type="image">
+                <posx>0</posx>
+                <posy>0</posy>
+                <width>470</width>
+                <height>520</height>
+                <texture border="28">epg_panel_bg.png</texture>
+            </control>
+
+            <control type="image">
+                <posx>20</posx>
+                <posy>18</posy>
+                <width>30</width>
+                <height>30</height>
+                <texture>icon.png</texture>
+                <aspectratio>keep</aspectratio>
+            </control>
+
+            <control type="label">
+                <posx>56</posx>
+                <posy>14</posy>
+                <width>320</width>
+                <height>36</height>
+                <aligny>center</aligny>
+                <font>font15_title</font>
+                <textcolor>FFF3B73B</textcolor>
+                <label>CONTROLE PARENTAL</label>
+            </control>
+
+            <control type="button" id="3030">
+                <posx>418</posx>
+                <posy>16</posy>
+                <width>36</width>
+                <height>36</height>
+                <texturenofocus>-</texturenofocus>
+                <texturefocus>-</texturefocus>
+                <label></label>
+                <onup>3030</onup>
+                <ondown>3011</ondown>
+                <onleft>3011</onleft>
+                <onright>3030</onright>
+            </control>
+
+            <control type="image">
+                <posx>420</posx>
+                <posy>18</posy>
+                <width>28</width>
+                <height>28</height>
+                <texture>icon_close_gold.png</texture>
+            </control>
+
+            <control type="image">
+                <posx>20</posx>
+                <posy>52</posy>
+                <width>430</width>
+                <height>1</height>
+                <texture colordiffuse="FFF3B73B">white.png</texture>
+            </control>
+
+            <control type="label">
+                <posx>20</posx>
+                <posy>58</posy>
+                <width>430</width>
+                <height>24</height>
+                <align>center</align>
+                <font>font12</font>
+                <textcolor>FFE6E6E6</textcolor>
+                <label>$INFO[Window.Property(parental.category)]</label>
+            </control>
+
+            <control type="label">
+                <posx>20</posx>
+                <posy>82</posy>
+                <width>430</width>
+                <height>22</height>
+                <align>center</align>
+                <font>font12</font>
+                <textcolor>FFB0B0B0</textcolor>
+                <label>Digite a senha seu safadinho</label>
+            </control>
+
+            <control type="image">
+                <posx>40</posx>
+                <posy>124</posy>
+                <width>390</width>
+                <height>60</height>
+                <texture>icon_password_field.png</texture>
+            </control>
+
+            <control type="label">
+                <posx>40</posx>
+                <posy>124</posy>
+                <width>390</width>
+                <height>60</height>
+                <align>center</align>
+                <aligny>center</aligny>
+                <font>font15</font>
+                <textcolor>FFFFFFFF</textcolor>
+                <label>$INFO[Window.Property(parental.display)]</label>
+                <visible>String.IsEmpty(Window.Property(parental.error))</visible>
+            </control>
+
+            <control type="label">
+                <posx>40</posx>
+                <posy>124</posy>
+                <width>390</width>
+                <height>60</height>
+                <align>center</align>
+                <aligny>center</aligny>
+                <font>font13</font>
+                <textcolor>FFE05C5C</textcolor>
+                <label>$INFO[Window.Property(parental.error)]</label>
+                <visible>!String.IsEmpty(Window.Property(parental.error))</visible>
+            </control>
+
+            <control type="group">
+                <posx>40</posx>
+                <posy>198</posy>
+
+                <control type="button" id="3011">
+                    <posx>0</posx>
+                    <posy>0</posy>
+                    <width>120</width>
+                    <height>64</height>
+                    <texturenofocus>icon_parental_btn_normal.png</texturenofocus>
+                    <texturefocus>icon_parental_btn_focused.png</texturefocus>
+                    <font>font15</font>
+                    <textcolor>FFE6E6E6</textcolor>
+                    <align>center</align>
+                    <aligny>center</aligny>
+                    <label></label>
+                    <onup>3011</onup>
+                    <ondown>3014</ondown>
+                    <onleft>3013</onleft>
+                    <onright>3012</onright>
+                </control>
+                <control type="button" id="3012">
+                    <posx>135</posx>
+                    <posy>0</posy>
+                    <width>120</width>
+                    <height>64</height>
+                    <texturenofocus>icon_parental_btn_normal.png</texturenofocus>
+                    <texturefocus>icon_parental_btn_focused.png</texturefocus>
+                    <font>font15</font>
+                    <textcolor>FFE6E6E6</textcolor>
+                    <align>center</align>
+                    <aligny>center</aligny>
+                    <label></label>
+                    <onup>3012</onup>
+                    <ondown>3015</ondown>
+                    <onleft>3011</onleft>
+                    <onright>3013</onright>
+                </control>
+                <control type="button" id="3013">
+                    <posx>270</posx>
+                    <posy>0</posy>
+                    <width>120</width>
+                    <height>64</height>
+                    <texturenofocus>icon_parental_btn_normal.png</texturenofocus>
+                    <texturefocus>icon_parental_btn_focused.png</texturefocus>
+                    <font>font15</font>
+                    <textcolor>FFE6E6E6</textcolor>
+                    <align>center</align>
+                    <aligny>center</aligny>
+                    <label></label>
+                    <onup>3013</onup>
+                    <ondown>3016</ondown>
+                    <onleft>3012</onleft>
+                    <onright>3030</onright>
+                </control>
+
+                <control type="button" id="3014">
+                    <posx>0</posx>
+                    <posy>74</posy>
+                    <width>120</width>
+                    <height>64</height>
+                    <texturenofocus>icon_parental_btn_normal.png</texturenofocus>
+                    <texturefocus>icon_parental_btn_focused.png</texturefocus>
+                    <font>font15</font>
+                    <textcolor>FFE6E6E6</textcolor>
+                    <align>center</align>
+                    <aligny>center</aligny>
+                    <label></label>
+                    <onup>3011</onup>
+                    <ondown>3017</ondown>
+                    <onleft>3016</onleft>
+                    <onright>3015</onright>
+                </control>
+                <control type="button" id="3015">
+                    <posx>135</posx>
+                    <posy>74</posy>
+                    <width>120</width>
+                    <height>64</height>
+                    <texturenofocus>icon_parental_btn_normal.png</texturenofocus>
+                    <texturefocus>icon_parental_btn_focused.png</texturefocus>
+                    <font>font15</font>
+                    <textcolor>FFE6E6E6</textcolor>
+                    <align>center</align>
+                    <aligny>center</aligny>
+                    <label></label>
+                    <onup>3012</onup>
+                    <ondown>3018</ondown>
+                    <onleft>3014</onleft>
+                    <onright>3016</onright>
+                </control>
+                <control type="button" id="3016">
+                    <posx>270</posx>
+                    <posy>74</posy>
+                    <width>120</width>
+                    <height>64</height>
+                    <texturenofocus>icon_parental_btn_normal.png</texturenofocus>
+                    <texturefocus>icon_parental_btn_focused.png</texturefocus>
+                    <font>font15</font>
+                    <textcolor>FFE6E6E6</textcolor>
+                    <align>center</align>
+                    <aligny>center</aligny>
+                    <label></label>
+                    <onup>3013</onup>
+                    <ondown>3019</ondown>
+                    <onleft>3015</onleft>
+                    <onright>3014</onright>
+                </control>
+
+                <control type="button" id="3017">
+                    <posx>0</posx>
+                    <posy>148</posy>
+                    <width>120</width>
+                    <height>64</height>
+                    <texturenofocus>icon_parental_btn_normal.png</texturenofocus>
+                    <texturefocus>icon_parental_btn_focused.png</texturefocus>
+                    <font>font15</font>
+                    <textcolor>FFE6E6E6</textcolor>
+                    <align>center</align>
+                    <aligny>center</aligny>
+                    <label></label>
+                    <onup>3014</onup>
+                    <ondown>3020</ondown>
+                    <onleft>3019</onleft>
+                    <onright>3018</onright>
+                </control>
+                <control type="button" id="3018">
+                    <posx>135</posx>
+                    <posy>148</posy>
+                    <width>120</width>
+                    <height>64</height>
+                    <texturenofocus>icon_parental_btn_normal.png</texturenofocus>
+                    <texturefocus>icon_parental_btn_focused.png</texturefocus>
+                    <font>font15</font>
+                    <textcolor>FFE6E6E6</textcolor>
+                    <align>center</align>
+                    <aligny>center</aligny>
+                    <label></label>
+                    <onup>3015</onup>
+                    <ondown>3010</ondown>
+                    <onleft>3017</onleft>
+                    <onright>3019</onright>
+                </control>
+                <control type="button" id="3019">
+                    <posx>270</posx>
+                    <posy>148</posy>
+                    <width>120</width>
+                    <height>64</height>
+                    <texturenofocus>icon_parental_btn_normal.png</texturenofocus>
+                    <texturefocus>icon_parental_btn_focused.png</texturefocus>
+                    <font>font15</font>
+                    <textcolor>FFE6E6E6</textcolor>
+                    <align>center</align>
+                    <aligny>center</aligny>
+                    <label></label>
+                    <onup>3016</onup>
+                    <ondown>3021</ondown>
+                    <onleft>3018</onleft>
+                    <onright>3017</onright>
+                </control>
+
+                <control type="button" id="3020">
+                    <posx>0</posx>
+                    <posy>222</posy>
+                    <width>120</width>
+                    <height>64</height>
+                    <texturenofocus>icon_parental_btn_normal.png</texturenofocus>
+                    <texturefocus>icon_parental_btn_focused.png</texturefocus>
+                    <font>font12</font>
+                    <textcolor>FFE6E6E6</textcolor>
+                    <align>center</align>
+                    <aligny>center</aligny>
+                    <label></label>
+                    <onup>3017</onup>
+                    <ondown>3020</ondown>
+                    <onleft>3021</onleft>
+                    <onright>3010</onright>
+                </control>
+                <control type="button" id="3010">
+                    <posx>135</posx>
+                    <posy>222</posy>
+                    <width>120</width>
+                    <height>64</height>
+                    <texturenofocus>icon_parental_btn_normal.png</texturenofocus>
+                    <texturefocus>icon_parental_btn_focused.png</texturefocus>
+                    <font>font15</font>
+                    <textcolor>FFE6E6E6</textcolor>
+                    <align>center</align>
+                    <aligny>center</aligny>
+                    <label></label>
+                    <onup>3018</onup>
+                    <ondown>3010</ondown>
+                    <onleft>3020</onleft>
+                    <onright>3021</onright>
+                </control>
+                <control type="button" id="3021">
+                    <posx>270</posx>
+                    <posy>222</posy>
+                    <width>120</width>
+                    <height>64</height>
+                    <texturenofocus>icon_parental_btn_normal.png</texturenofocus>
+                    <texturefocus>icon_parental_btn_focused.png</texturefocus>
+                    <font>font12</font>
+                    <textcolor>FFE6E6E6</textcolor>
+                    <align>center</align>
+                    <aligny>center</aligny>
+                    <label></label>
+                    <onup>3019</onup>
+                    <ondown>3021</ondown>
+                    <onleft>3010</onleft>
+                    <onright>3020</onright>
+                </control>
+            </control>
+
+        </control>
+
+<control type="group">
+                <visible>String.IsEqual(Window.Property(king.mode),notice)</visible>
+            <posx>710</posx>
+            <posy>380</posy>
+
+            <control type="image">
+                <posx>0</posx>
+                <posy>0</posy>
+                <width>500</width>
+                <height>280</height>
+                <texture border="28">epg_panel_bg.png</texture>
+            </control>
+
+            <control type="image">
+                <posx>20</posx>
+                <posy>20</posy>
+                <width>30</width>
+                <height>30</height>
+                <texture>icon.png</texture>
+                <aspectratio>keep</aspectratio>
+            </control>
+
+            <control type="label">
+                <posx>58</posx>
+                <posy>16</posy>
+                <width>420</width>
+                <height>38</height>
+                <aligny>center</aligny>
+                <font>font15_title</font>
+                <textcolor>FFF3B73B</textcolor>
+                <label>$INFO[Window.Property(notice.title)]</label>
+            </control>
+
+            <control type="image">
+                <posx>20</posx>
+                <posy>58</posy>
+                <width>460</width>
+                <height>1</height>
+                <texture colordiffuse="FF3A3A3A">white.png</texture>
+            </control>
+
+            <control type="label">
+                <posx>30</posx>
+                <posy>76</posy>
+                <width>440</width>
+                <height>110</height>
+                <align>center</align>
+                <font>font12</font>
+                <textcolor>FFE6E6E6</textcolor>
+                <wrapmultiline>true</wrapmultiline>
+                <label>$INFO[Window.Property(notice.message)]</label>
+            </control>
+
+            <control type="button" id="5001">
+                <posx>170</posx>
+                <posy>200</posy>
+                <width>160</width>
+                <height>56</height>
+                <texturenofocus>icon_parental_btn_normal.png</texturenofocus>
+                <texturefocus>icon_parental_btn_focused.png</texturefocus>
+                <font>font13</font>
+                <textcolor>FFE6E6E6</textcolor>
+                <align>center</align>
+                <aligny>center</aligny>
+                <label>OK</label>
+                <onup>5001</onup>
+                <ondown>5001</ondown>
+                <onleft>5001</onleft>
+                <onright>5001</onright>
+            </control>
+
+        </control>
+
+        <control type="group">
+            <visible>String.IsEqual(Window.Property(king.mode),confirm)</visible>
+            <posx>660</posx>
+            <posy>300</posy>
+
+            <control type="image">
+                <posx>0</posx>
+                <posy>0</posy>
+                <width>600</width>
+                <height>420</height>
+                <texture border="28">epg_panel_bg.png</texture>
+            </control>
+
+            <control type="image">
+                <posx>20</posx>
+                <posy>20</posy>
+                <width>30</width>
+                <height>30</height>
+                <texture>icon.png</texture>
+                <aspectratio>keep</aspectratio>
+            </control>
+
+            <control type="label">
+                <posx>58</posx>
+                <posy>16</posy>
+                <width>520</width>
+                <height>38</height>
+                <aligny>center</aligny>
+                <font>font15_title</font>
+                <textcolor>FFF3B73B</textcolor>
+                <label>$INFO[Window.Property(confirm.title)]</label>
+            </control>
+
+            <control type="image">
+                <posx>20</posx>
+                <posy>58</posy>
+                <width>560</width>
+                <height>1</height>
+                <texture colordiffuse="FFF3B73B">white.png</texture>
+            </control>
+
+            <control type="label">
+                <posx>30</posx>
+                <posy>76</posy>
+                <width>540</width>
+                <height>230</height>
+                <align>left</align>
+                <font>font12</font>
+                <textcolor>FFE6E6E6</textcolor>
+                <wrapmultiline>true</wrapmultiline>
+                <label>$INFO[Window.Property(confirm.message)]</label>
+            </control>
+
+            <control type="button" id="6002">
+                <posx>320</posx>
+                <posy>330</posy>
+                <width>170</width>
+                <height>56</height>
+                <texturenofocus>icon_parental_btn_normal.png</texturenofocus>
+                <texturefocus>icon_parental_btn_focused.png</texturefocus>
+                <font>font13</font>
+                <textcolor>FFE6E6E6</textcolor>
+                <align>center</align>
+                <aligny>center</aligny>
+                <label>NÃO</label>
+                <onup>6002</onup>
+                <ondown>6002</ondown>
+                <onleft>6001</onleft>
+                <onright>6002</onright>
+            </control>
+
+            <control type="button" id="6001">
+                <posx>110</posx>
+                <posy>330</posy>
+                <width>170</width>
+                <height>56</height>
+                <texturenofocus>icon_parental_btn_normal.png</texturenofocus>
+                <texturefocus>icon_parental_btn_focused.png</texturefocus>
+                <font>font13</font>
+                <textcolor>FFE6E6E6</textcolor>
+                <align>center</align>
+                <aligny>center</aligny>
+                <label>SIM</label>
+                <onup>6001</onup>
+                <ondown>6001</ondown>
+                <onleft>6001</onleft>
+                <onright>6002</onright>
+            </control>
+
+        </control>
+
+    </controls>
+</window>

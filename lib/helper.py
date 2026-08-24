@@ -124,12 +124,6 @@ def setsetting(key,value):
 def get_live_quality_mode():
     return '720p' if getsetting('live_quality_mode') == '1' else '1080p'
 
-def is_adult_unlocked():
-    return getsetting('adult_unlocked') == 'true'
-
-def get_hide_adult():
-    return 'false' if is_adult_unlocked() else 'true'
-
 def exists(path):
     return xbmcvfs.exists(path)
 

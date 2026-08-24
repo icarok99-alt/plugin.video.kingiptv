@@ -157,7 +157,7 @@
                         <posy>19</posy>
                         <width>132</width>
                         <height>80</height>
-                        <texture fallback="icon.png">$INFO[ListItem.Icon]</texture>
+                        <texture>$INFO[ListItem.Icon]</texture>
                         <aspectratio aligny="center" align="center">keep</aspectratio>
                         <visible>!String.IsEqual(Window(Home).Property(nav.mode),list) | String.IsEqual(Window(Home).Property(nav.list.kind),episodes)</visible>
                     </control>
@@ -166,7 +166,7 @@
                         <posy>14</posy>
                         <width>75</width>
                         <height>92</height>
-                        <texture fallback="icon.png">$INFO[ListItem.Icon]</texture>
+                        <texture>$INFO[ListItem.Icon]</texture>
                         <aspectratio aligny="center" align="center">keep</aspectratio>
                         <visible>String.IsEqual(Window(Home).Property(nav.mode),list) + !String.IsEqual(Window(Home).Property(nav.list.kind),episodes)</visible>
                     </control>
@@ -247,7 +247,7 @@
                         <posy>19</posy>
                         <width>132</width>
                         <height>80</height>
-                        <texture fallback="icon.png">$INFO[ListItem.Icon]</texture>
+                        <texture>$INFO[ListItem.Icon]</texture>
                         <aspectratio aligny="center" align="center">keep</aspectratio>
                         <visible>!String.IsEqual(Window(Home).Property(nav.mode),list) | String.IsEqual(Window(Home).Property(nav.list.kind),episodes)</visible>
                     </control>
@@ -256,7 +256,7 @@
                         <posy>14</posy>
                         <width>75</width>
                         <height>92</height>
-                        <texture fallback="icon.png">$INFO[ListItem.Icon]</texture>
+                        <texture>$INFO[ListItem.Icon]</texture>
                         <aspectratio aligny="center" align="center">keep</aspectratio>
                         <visible>String.IsEqual(Window(Home).Property(nav.mode),list) + !String.IsEqual(Window(Home).Property(nav.list.kind),episodes)</visible>
                     </control>
@@ -358,7 +358,7 @@
                 <posy>20</posy>
                 <width>420</width>
                 <height>620</height>
-                <texture fallback="-">$INFO[Window(Home).Property(nav.detail.poster)]</texture>
+                <texture>$INFO[Window(Home).Property(nav.detail.poster)]</texture>
                 <aspectratio aligny="center" align="center">keep</aspectratio>
                 <visible>!String.IsEmpty(Window(Home).Property(nav.detail.poster)) + !String.IsEqual(Window(Home).Property(nav.list.kind),episodes)</visible>
             </control>
@@ -368,7 +368,7 @@
                 <posy>25</posy>
                 <width>700</width>
                 <height>394</height>
-                <texture fallback="-">$INFO[Window(Home).Property(nav.detail.poster)]</texture>
+                <texture>$INFO[Window(Home).Property(nav.detail.poster)]</texture>
                 <aspectratio aligny="center" align="center">keep</aspectratio>
                 <visible>!String.IsEmpty(Window(Home).Property(nav.detail.poster)) + String.IsEqual(Window(Home).Property(nav.list.kind),episodes)</visible>
             </control>

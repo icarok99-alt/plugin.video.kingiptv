@@ -9,11 +9,14 @@ class LoadingManager:
         self.lock = threading.Lock()
         self.busy_stop = threading.Event()
         self.busy_thread = None
+        self.ref_count = 0
 
     def close_native_busy(self):
         try:
-            xbmc.executebuiltin('Dialog.Close(busydialog,true)')
-            xbmc.executebuiltin('Dialog.Close(busydialognocancel,true)')
+            if xbmc.getCondVisibility('Window.IsActive(busydialog)'):
+                xbmc.executebuiltin('Dialog.Close(busydialog,true)')
+            if xbmc.getCondVisibility('Window.IsActive(busydialognocancel)'):
+                xbmc.executebuiltin('Dialog.Close(busydialognocancel,true)')
         except Exception:
             pass
 
@@ -25,15 +28,21 @@ class LoadingManager:
 
     def start_busy_suppressor(self):
         with self.lock:
+            self.ref_count += 1
             if self.busy_thread is not None and self.busy_thread.is_alive():
                 return
             self.busy_stop.clear()
             self.close_native_busy()
-            self.busy_thread = threading.Thread(target=self.run_busy_suppressor, daemon=True)
+            self.busy_thread = threading.Thread(target=self.run_busy_suppressor, daemon=True, name='BusySuppressor')
             self.busy_thread.start()
 
     def stop_busy_suppressor(self):
-        self.busy_stop.set()
+        with self.lock:
+            if self.ref_count > 0:
+                self.ref_count -= 1
+            if self.ref_count > 0:
+                return
+            self.busy_stop.set()
         self.close_native_busy()
 
 
