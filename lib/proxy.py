@@ -8,14 +8,13 @@ import os
 import re
 from collections import deque
 from urllib.parse import urlparse, unquote, urljoin, parse_qs, urlsplit
-from urllib.request import Request, urlopen
-from urllib.error import HTTPError
 import ssl
 import gzip
 import zlib
 import socketserver
 import http.client
 import queue
+
 try:
     import xbmcvfs
 except ImportError:
@@ -29,15 +28,18 @@ PROXY_PORT_POOL = [57845, 57846, 57847, 57848, 57849, 57850]
 PROXY_PORT = PROXY_PORT_POOL[0]
 port_state_lock = threading.Lock()
 
+
 def get_active_port():
     with port_state_lock:
         return PROXY_PORT
+
 
 def set_active_port(port):
     global PROXY_PORT
     with port_state_lock:
         PROXY_PORT = port
     persist_port(port)
+
 
 def port_state_path():
     try:
@@ -53,6 +55,7 @@ def port_state_path():
     except Exception:
         return None
 
+
 def persist_port(port):
     path = port_state_path()
     if not path:
@@ -62,6 +65,7 @@ def persist_port(port):
             f.write(str(port))
     except Exception:
         pass
+
 
 def read_persisted_port():
     path = port_state_path()
@@ -74,8 +78,10 @@ def read_persisted_port():
     except Exception:
         return None
 
+
 def get_preferred_port():
     return read_persisted_port()
+
 
 def is_port_free(port, host="127.0.0.1"):
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -90,17 +96,16 @@ def is_port_free(port, host="127.0.0.1"):
         except Exception:
             pass
 
+
 MAX_RETRIES = 3
 RETRY_DELAY = 0.3
 BUFFER_SIZE = 65536
 
-SEGMENT_INLINE_RETRIES = 1
+SEGMENT_INLINE_RETRIES = 3
 SEGMENT_INLINE_RETRY_DELAY = 0.3
 
 PLAYLIST_FETCH_TIMEOUT = 10
-READY_QUEUE_MAXSIZE = 3
-SEGMENT_FETCH_TIMEOUT = 6
-SEGMENT_MAX_RETRIES = 1
+SEGMENT_FETCH_TIMEOUT = 15
 
 MIN_REFRESH_INTERVAL = 2.0
 MAX_WAIT_FOR_NEW_SEGMENTS = 1.0
@@ -108,7 +113,7 @@ MAX_STALL_WITHOUT_PROGRESS_SECONDS = 15.0
 SERVED_IDS_MAX = 400
 TRICKLE_INTERVAL_TARGET = 0.2
 TRICKLE_MIN_TS_PACKETS = 8
-MAX_PACING_AHEAD_SECONDS = 1.5
+MAX_PACING_AHEAD_SECONDS = 6.0
 MAX_PACING_BEHIND_SECONDS = 2.0
 
 MAX_ACTIVE_CHANNEL_STREAMS = 12
@@ -126,7 +131,6 @@ START_TIME_OFFSET_RE = re.compile(r'TIME-OFFSET=(-?[\d.]+)')
 
 SERVER_HOLD_BACK_MULTIPLIER = 3.0
 DEFAULT_LIVE_DELAY_SECONDS = 6.0
-
 
 AUTH_ERROR_CODES = {401, 403}
 NOT_FOUND_CODES = {404, 410}
@@ -176,6 +180,7 @@ UA_POOL = [
     "Mozilla/5.0 (iPhone; CPU iPhone OS 18_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.5 Mobile/15E148 Safari/604.1",
 ]
 
+
 def get_origin(url):
     try:
         parsed = urlparse(url)
@@ -184,6 +189,7 @@ def get_origin(url):
     except Exception:
         pass
     return ''
+
 
 class ConnectionPool:
     def __init__(self, ssl_context, timeout=15):
@@ -213,10 +219,10 @@ class ConnectionPool:
             parsed = urlsplit(current_url)
             key = self._key(parsed)
             path = (parsed.path or '/') + (('?' + parsed.query) if parsed.query else '')
-            
+
             with self._lock:
                 conn = self._conns.pop(key, None)
-                
+
             for attempt in range(2):
                 if conn is None:
                     conn = self._new_conn(parsed, timeout)
@@ -227,7 +233,7 @@ class ConnectionPool:
                     body = resp.read()
                     status = resp.status
                     resp_headers = {k.lower(): v for k, v in resp.getheaders()}
-                    
+
                     if resp_headers.get('connection', '').lower() != 'close':
                         with self._lock:
                             self._conns[key] = conn
@@ -278,12 +284,14 @@ class _LiveFeeder:
         self.client_gone = client_gone
 
         self.stop_event = threading.Event()
-        self.ready = queue.Queue(maxsize=READY_QUEUE_MAXSIZE)
+        self.ready = queue.Queue(maxsize=6)
         self.error_kind = [None]
 
-        self.served_set = set()
-        self.served_ids = deque()
+        self.served_urls = set()
+        self.served_urls_deque = deque()
         self.last_served_seq = None
+
+        self.last_segment_list = None
 
     def stop(self):
         self.stop_event.set()
@@ -312,32 +320,13 @@ class _LiveFeeder:
         return False
 
     def _mark_served(self, seg_url, seq):
-        sid = self.proxy._segment_id(seg_url)
-        self.served_set.add(sid)
-        self.served_ids.append(sid)
-        if len(self.served_ids) > SERVED_IDS_MAX:
-            old = self.served_ids.popleft()
-            self.served_set.discard(old)
+        self.served_urls.add(seg_url)
+        self.served_urls_deque.append(seg_url)
+        if len(self.served_urls_deque) > SERVED_IDS_MAX:
+            old = self.served_urls_deque.popleft()
+            self.served_urls.discard(old)
         if seq is not None and (self.last_served_seq is None or seq > self.last_served_seq):
             self.last_served_seq = seq
-
-    def _new_segments(self, candidate_state):
-        candidates = self.proxy._segments_with_seq(candidate_state)
-        has_seq = self.last_served_seq is not None and any(s is not None for _, _, s in candidates)
-        if has_seq:
-            max_seq = max((c[2] for c in candidates if c[2] is not None), default=None)
-            if max_seq is not None and max_seq < self.last_served_seq:
-                self.last_served_seq = None
-                self.served_set.clear()
-                self.served_ids.clear()
-                return self.proxy._segments_from_live_edge(candidate_state)
-            return [c for c in candidates if c[2] is not None and c[2] > self.last_served_seq]
-        return [c for c in candidates if self.proxy._segment_id(c[0]) not in self.served_set]
-
-    def _content_wait_seconds(self, empty_streak):
-        target = (self.state.get('target_duration') if self.state else None) or MIN_REFRESH_INTERVAL
-        base = max(MIN_REFRESH_INTERVAL, target * 0.5)
-        return min(base * (1 + 0.25 * empty_streak), target)
 
     def _refresh(self):
         new_state, kind = self.proxy.get_or_refresh_playlist(
@@ -345,7 +334,50 @@ class _LiveFeeder:
         )
         return new_state, kind
 
+    def _new_segments(self, candidate_state):
+        segments = self.proxy._segments_with_seq(candidate_state)
+        if not segments:
+            return []
+
+        reset_detected = False
+        if self.last_segment_list is not None:
+            old_seq = self.last_segment_list[0][2] if self.last_segment_list else None
+            new_seq = segments[0][2]
+            if old_seq is not None and new_seq is not None:
+                if new_seq < old_seq:
+                    reset_detected = True
+            if not reset_detected and old_seq is None and new_seq is None:
+                old_urls = {seg[0] for seg in self.last_segment_list[:3]}
+                new_urls = {seg[0] for seg in segments[:3]}
+                if not old_urls.intersection(new_urls):
+                    reset_detected = True
+        else:
+            pass
+
+        if reset_detected:
+            self.served_urls.clear()
+            self.served_urls_deque.clear()
+            self.last_served_seq = None
+            return self.proxy._segments_from_live_edge(candidate_state)
+
+        new_segments = []
+        for url, dur, seq in segments:
+            if seq is not None:
+                if self.last_served_seq is not None and seq <= self.last_served_seq:
+                    continue
+                if url in self.served_urls:
+                    continue
+                new_segments.append((url, dur, seq))
+            else:
+                if url not in self.served_urls:
+                    new_segments.append((url, dur, seq))
+
+        self.last_segment_list = segments[:]
+        return new_segments
+
     def _fetch_loop(self):
+        self.last_segment_list = self.proxy._segments_with_seq(self.state)
+
         pending = deque(self.proxy._segments_from_live_edge(self.state))
         stall_since = None
         empty_streak = 0
@@ -355,6 +387,7 @@ class _LiveFeeder:
             if not pending:
                 if self._peek_disconnected():
                     return
+
                 new_state, kind = self._refresh()
                 if kind in ('auth', 'blocked'):
                     auth_failures += 1
@@ -367,21 +400,23 @@ class _LiveFeeder:
 
                 candidate_state = new_state or self.state
                 new_segments = self._new_segments(candidate_state)
+
                 if not new_segments:
                     now = time.time()
                     if stall_since is None:
                         stall_since = now
                     elif now - stall_since > MAX_STALL_WITHOUT_PROGRESS_SECONDS:
+                        self.served_urls.clear()
+                        self.served_urls_deque.clear()
                         self.last_served_seq = None
-                        self.served_set.clear()
-                        self.served_ids.clear()
+                        self.last_segment_list = None
                         pending = deque(self.proxy._segments_from_live_edge(candidate_state))
                         stall_since = None
                         empty_streak = 0
                         self.state = candidate_state
                         continue
                     empty_streak += 1
-                    wait_s = self._content_wait_seconds(empty_streak)
+                    wait_s = min(MAX_WAIT_FOR_NEW_SEGMENTS * (1 + 0.5 * (empty_streak - 1)), 3.0)
                     self.stop_event.wait(wait_s)
                     continue
 
@@ -443,7 +478,7 @@ class _LiveFeeder:
                 if pacing['session_start'] is None:
                     ok = safe_write(memoryview(data))
                     pacing['session_start'] = time.time()
-                    pacing['duration_sent'] = duration or 0.0
+                    pacing['duration_sent'] = 0.0
                 else:
                     ok = self.proxy._trickle_write(
                         safe_write, data, duration, self.is_client_alive, pacing
@@ -611,7 +646,7 @@ class UnifiedProxy:
 
     def download_segment(self, url, headers):
         data, _final_url, _status, kind = self._fetch_url(
-            url, headers, timeout=SEGMENT_FETCH_TIMEOUT, max_retries=SEGMENT_MAX_RETRIES
+            url, headers, timeout=SEGMENT_FETCH_TIMEOUT, max_retries=MAX_RETRIES
         )
         if not data:
             return None, kind
@@ -761,8 +796,12 @@ class UnifiedProxy:
         return all_segments[start_idx:]
 
     @staticmethod
-    def _segment_id(url):
-        return url.split('/')[-1].split('?')[0]
+    def _segments_with_seq(state):
+        media_seq = state.get('media_sequence')
+        segments = state.get('segments') or []
+        if media_seq is None:
+            return [(u, d, None) for u, d in segments]
+        return [(u, d, media_seq + i) for i, (u, d) in enumerate(segments)]
 
     def _trickle_write(self, safe_write, data, duration, is_client_alive, pacing):
         total_len = len(data)
@@ -804,15 +843,8 @@ class UnifiedProxy:
                 time.sleep(min(ahead, chunk_duration * 4))
         return True
 
-    @staticmethod
-    def _segments_with_seq(state):
-        media_seq = state.get('media_sequence')
-        segments = state.get('segments') or []
-        if media_seq is None:
-            return [(u, d, None) for u, d in segments]
-        return [(u, d, media_seq + i) for i, (u, d) in enumerate(segments)]
-
-    def serve_live_channel(self, playlist_url, headers, safe_write, is_client_alive, client_sock=None, client_gone=None):
+    def serve_live_channel(self, playlist_url, headers, safe_write, is_client_alive,
+                           client_sock=None, client_gone=None):
         channel_key = self.channel_key(playlist_url)
         self.channel_last_active[channel_key] = time.time()
 
@@ -903,6 +935,7 @@ class UnifiedProxy:
                 self._send_error(wfile, status, msg)
         finally:
             self.release_stream_slot()
+
 
 class ProxyHandler(socketserver.StreamRequestHandler):
     proxy = UnifiedProxy()
@@ -1051,9 +1084,11 @@ class ProxyHandler(socketserver.StreamRequestHandler):
             except Exception:
                 pass
 
+
 class ThreadedTCPServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
     allow_reuse_address = True
     daemon_threads = True
+
 
 def make_redirect_handler(target_port):
     class RedirectHandler(socketserver.StreamRequestHandler):
@@ -1087,12 +1122,15 @@ def make_redirect_handler(target_port):
                 pass
     return RedirectHandler
 
+
 class RedirectTCPServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
     allow_reuse_address = True
     daemon_threads = True
 
+
 class NoPortAvailableError(Exception):
     pass
+
 
 class UnifiedServer:
     def __init__(self, ports=None):
