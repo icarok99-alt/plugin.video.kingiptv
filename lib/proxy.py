@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 
+import ipaddress
 import socket
 import threading
 import random
@@ -191,6 +192,16 @@ def get_origin(url):
     return ''
 
 
+def is_ip_literal(host):
+    if not host:
+        return False
+    try:
+        ipaddress.ip_address(host.strip('[]'))
+        return True
+    except ValueError:
+        return False
+
+
 class ConnectionPool:
     def __init__(self, ssl_context, timeout=15):
         self.ssl_context = ssl_context
@@ -210,15 +221,23 @@ class ConnectionPool:
             )
         return http.client.HTTPConnection(parsed.hostname, parsed.port, timeout=timeout)
 
-    def request(self, url, method='GET', headers=None, timeout=None, max_redirects=5):
+    def request(self, url, method='GET', headers=None, timeout=None, max_redirects=5,
+                auto_origin=True):
         timeout = timeout or self.timeout
         current_url = url
-        headers = dict(headers or {})
-        headers['Connection'] = 'keep-alive'
+        base_headers = dict(headers or {})
+        base_headers['Connection'] = 'keep-alive'
         for _ in range(max_redirects + 1):
             parsed = urlsplit(current_url)
             key = self._key(parsed)
             path = (parsed.path or '/') + (('?' + parsed.query) if parsed.query else '')
+
+            req_headers = dict(base_headers)
+            if auto_origin and not is_ip_literal(parsed.hostname):
+                hop_origin = get_origin(current_url)
+                if hop_origin:
+                    req_headers['Origin'] = hop_origin
+                    req_headers['Referer'] = hop_origin + '/'
 
             with self._lock:
                 conn = self._conns.pop(key, None)
@@ -228,7 +247,7 @@ class ConnectionPool:
                     conn = self._new_conn(parsed, timeout)
                 try:
                     conn.timeout = timeout
-                    conn.request(method, path, headers=headers)
+                    conn.request(method, path, headers=req_headers)
                     resp = conn.getresponse()
                     body = resp.read()
                     status = resp.status
@@ -330,7 +349,7 @@ class _LiveFeeder:
 
     def _refresh(self):
         new_state, kind = self.proxy.get_or_refresh_playlist(
-            self.channel_key, self.playlist_url, self.headers, force=True
+            self.channel_key, self.playlist_url, self.headers
         )
         return new_state, kind
 
@@ -594,27 +613,29 @@ class UnifiedProxy:
             if is_alive is not None and not is_alive():
                 return None, None, None, 'aborted'
             ua = fixed_ua if attempt == 0 else random.choice(UA_POOL)
-            origin = get_origin(url)
             req_headers = {
                 'User-Agent': ua,
                 'Accept': '*/*',
                 'Accept-Language': 'pt-BR,pt;q=0.9',
             }
-            if origin:
-                req_headers['Origin'] = origin
-                req_headers['Referer'] = origin + '/'
             for k, v in (headers or {}).items():
                 if k.lower() not in ('host', 'connection', 'content-length', 'range',
                                      'user-agent', 'accept-encoding'):
                     req_headers[k] = v
+            auto_origin = attempt == 0
             try:
                 status, resp_headers, data, final_url = self.conn_pool.request(
-                    url, method='GET', headers=req_headers, timeout=timeout
+                    url, method='GET', headers=req_headers, timeout=timeout,
+                    auto_origin=auto_origin
                 )
                 if status not in (200, 206):
                     kind = classify_status(status)
                     last_status, last_kind = status, kind
-                    if kind in ('auth', 'not_found', 'blocked') or attempt >= max_retries - 1:
+                    if kind in ('auth', 'not_found', 'blocked'):
+                        if auto_origin and attempt < max_retries - 1:
+                            continue
+                        return None, None, status, kind
+                    if attempt >= max_retries - 1:
                         return None, None, status, kind
                     delay = RETRY_DELAY * (attempt + 1)
                     if kind == 'rate_limit':
@@ -848,7 +869,7 @@ class UnifiedProxy:
         channel_key = self.channel_key(playlist_url)
         self.channel_last_active[channel_key] = time.time()
 
-        state, kind = self.get_or_refresh_playlist(channel_key, playlist_url, headers, force=True)
+        state, kind = self.get_or_refresh_playlist(channel_key, playlist_url, headers)
         if not state or not state.get('segments'):
             return False, kind
 
