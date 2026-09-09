@@ -20,10 +20,6 @@ try:
     import xbmcvfs
 except ImportError:
     xbmcvfs = None
-try:
-    import xbmc
-except ImportError:
-    xbmc = None
 
 PROXY_PORT_POOL = [57845, 57846, 57847, 57848, 57849, 57850]
 PROXY_PORT = PROXY_PORT_POOL[0]
@@ -100,7 +96,6 @@ def is_port_free(port, host="127.0.0.1"):
 
 MAX_RETRIES = 3
 RETRY_DELAY = 0.3
-BUFFER_SIZE = 65536
 
 SEGMENT_INLINE_RETRIES = 3
 SEGMENT_INLINE_RETRY_DELAY = 0.3
@@ -122,7 +117,6 @@ MAX_CONCURRENT_HANDLERS = 20
 CHANNEL_STATE_TTL = 300
 CACHE_CLEANUP_INTERVAL = 60
 SOCKET_IDLE_TIMEOUT = 10
-SOCKET_STREAM_TIMEOUT = 10
 
 EXTINF_RE = re.compile(r'#EXTINF:\s*([\d.]+)')
 TARGETDURATION_RE = re.compile(r'#EXT-X-TARGETDURATION:\s*(\d+(?:\.\d+)?)')
@@ -138,8 +132,10 @@ NOT_FOUND_CODES = {404, 410}
 BLOCKED_CODES = {451}
 RATE_LIMIT_CODES = {429}
 SERVER_ERROR_CODES = {500, 502, 503, 504}
-NON_RETRYABLE_CODES = AUTH_ERROR_CODES | NOT_FOUND_CODES | BLOCKED_CODES
 MAX_CONSECUTIVE_AUTH_FAILURES = 2
+
+NON_RETRYABLE_KINDS = {'auth', 'not_found', 'blocked'}
+CIRCUIT_BREAKER_KINDS = {'auth', 'blocked'}
 
 
 def classify_status(status):
@@ -200,6 +196,19 @@ def is_ip_literal(host):
         return True
     except ValueError:
         return False
+
+
+def write_http_error(wfile, code, message=""):
+    try:
+        body = "{} {}".format(code, message).encode("utf-8", "replace")
+        wfile.write("HTTP/1.1 {} {}\r\n".format(code, message).encode())
+        wfile.write(b"Content-Type: text/plain; charset=utf-8\r\n")
+        wfile.write("Content-Length: {}\r\n".format(len(body)).encode())
+        wfile.write(b"Access-Control-Allow-Origin: *\r\n")
+        wfile.write(b"Connection: close\r\n\r\n")
+        wfile.write(body)
+    except Exception:
+        pass
 
 
 class ConnectionPool:
@@ -408,7 +417,7 @@ class _LiveFeeder:
                     return
 
                 new_state, kind = self._refresh()
-                if kind in ('auth', 'blocked'):
+                if kind in CIRCUIT_BREAKER_KINDS:
                     auth_failures += 1
                     if auth_failures > MAX_CONSECUTIVE_AUTH_FAILURES:
                         self.error_kind[0] = kind
@@ -448,17 +457,17 @@ class _LiveFeeder:
             seg_url, seg_dur, seg_seq = pending.popleft()
             data, seg_kind = self.proxy.download_segment(seg_url, self.headers)
 
-            if not data and seg_kind not in ('auth', 'blocked', 'not_found'):
+            if not data and seg_kind not in NON_RETRYABLE_KINDS:
                 for _ in range(SEGMENT_INLINE_RETRIES):
                     if self.stop_event.is_set() or not self.is_client_alive():
                         return
                     time.sleep(SEGMENT_INLINE_RETRY_DELAY)
                     data, seg_kind = self.proxy.download_segment(seg_url, self.headers)
-                    if data or seg_kind in ('auth', 'not_found', 'blocked'):
+                    if data or seg_kind in NON_RETRYABLE_KINDS:
                         break
 
             if not data:
-                if seg_kind in ('auth', 'blocked'):
+                if seg_kind in CIRCUIT_BREAKER_KINDS:
                     auth_failures += 1
                     if auth_failures > MAX_CONSECUTIVE_AUTH_FAILURES:
                         self.error_kind[0] = seg_kind
@@ -631,7 +640,7 @@ class UnifiedProxy:
                 if status not in (200, 206):
                     kind = classify_status(status)
                     last_status, last_kind = status, kind
-                    if kind in ('auth', 'not_found', 'blocked'):
+                    if kind in NON_RETRYABLE_KINDS:
                         if auto_origin and attempt < max_retries - 1:
                             continue
                         return None, None, status, kind
@@ -751,7 +760,8 @@ class UnifiedProxy:
             state = self.playlist_state.get(channel_key)
         if state and not force:
             elapsed = time.time() - state['last_fetch_ts']
-            cache_ttl = max(state.get('target_duration') or MIN_REFRESH_INTERVAL, MIN_REFRESH_INTERVAL)
+            seg_duration = self._latest_segment_duration(state) or MIN_REFRESH_INTERVAL
+            cache_ttl = max(state.get('target_duration') or seg_duration, seg_duration)
             if elapsed < cache_ttl:
                 return state, 'cached'
 
@@ -824,6 +834,14 @@ class UnifiedProxy:
             return [(u, d, None) for u, d in segments]
         return [(u, d, media_seq + i) for i, (u, d) in enumerate(segments)]
 
+    @staticmethod
+    def _latest_segment_duration(state):
+        segments = state.get('segments') or []
+        for _, dur in reversed(segments):
+            if dur:
+                return dur
+        return None
+
     def _trickle_write(self, safe_write, data, duration, is_client_alive, pacing):
         total_len = len(data)
         if total_len == 0:
@@ -894,19 +912,10 @@ class UnifiedProxy:
             feeder.stop()
 
     def _send_error(self, wfile, code, message=""):
-        try:
-            body = "{} {}".format(code, message).encode("utf-8", "replace")
-            wfile.write("HTTP/1.1 {} {}\r\n".format(code, message).encode())
-            wfile.write(b"Content-Type: text/plain\r\n")
-            wfile.write("Content-Length: {}\r\n".format(len(body)).encode())
-            wfile.write(b"Access-Control-Allow-Origin: *\r\n")
-            wfile.write(b"Connection: close\r\n\r\n")
-            wfile.write(body)
-        except Exception:
-            pass
+        write_http_error(wfile, code, message)
 
     def handle_channel_stream(self, url, headers, wfile, client_sock=None, method='GET'):
-        if method in ('HEAD', 'OPTIONS'):
+        if method == 'HEAD':
             try:
                 wfile.write(b"HTTP/1.1 200 OK\r\n")
                 wfile.write(b"Content-Type: video/mp2t\r\n")
@@ -984,16 +993,7 @@ class ProxyHandler(socketserver.StreamRequestHandler):
             pass
 
     def send_error(self, code, message=""):
-        body = "{} {}".format(code, message).encode("utf-8", "replace")
-        self.send_response(code)
-        self.send_header("Content-Type", "text/plain; charset=utf-8")
-        self.send_header("Content-Length", str(len(body)))
-        self.send_header("Access-Control-Allow-Origin", "*")
-        self.end_headers()
-        try:
-            self.wfile.write(body)
-        except Exception:
-            pass
+        write_http_error(self.wfile, code, message)
 
     def handle(self):
         try:
@@ -1144,11 +1144,6 @@ def make_redirect_handler(target_port):
     return RedirectHandler
 
 
-class RedirectTCPServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
-    allow_reuse_address = True
-    daemon_threads = True
-
-
 class NoPortAvailableError(Exception):
     pass
 
@@ -1189,7 +1184,7 @@ class UnifiedServer:
             if p == self.port:
                 continue
             try:
-                srv = RedirectTCPServer(("127.0.0.1", p), handler_cls)
+                srv = ThreadedTCPServer(("127.0.0.1", p), handler_cls)
                 srv.timeout = 1
             except OSError:
                 continue
