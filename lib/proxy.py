@@ -25,6 +25,47 @@ PROXY_PORT_POOL = [57845, 57846, 57847, 57848, 57849, 57850]
 PROXY_PORT = PROXY_PORT_POOL[0]
 port_state_lock = threading.Lock()
 
+PROXY_HOST = None
+host_state_lock = threading.Lock()
+
+
+def get_device_ip():
+    candidates = []
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        try:
+            s.connect(("8.8.8.8", 80))
+            candidates.append(s.getsockname()[0])
+        finally:
+            s.close()
+    except Exception:
+        pass
+    if not candidates:
+        try:
+            hostname = socket.gethostname()
+            for ip in socket.gethostbyname_ex(hostname)[2]:
+                candidates.append(ip)
+        except Exception:
+            pass
+    for ip in candidates:
+        if ip and not ip.startswith("127."):
+            return ip
+    return "127.0.0.1"
+
+
+def get_active_host():
+    global PROXY_HOST
+    with host_state_lock:
+        if not PROXY_HOST:
+            PROXY_HOST = get_device_ip()
+        return PROXY_HOST
+
+
+def set_active_host(host):
+    global PROXY_HOST
+    with host_state_lock:
+        PROXY_HOST = host
+
 
 def get_active_port():
     with port_state_lock:
@@ -80,7 +121,9 @@ def get_preferred_port():
     return read_persisted_port()
 
 
-def is_port_free(port, host="127.0.0.1"):
+def is_port_free(port, host=None):
+    if host is None:
+        host = get_active_host()
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     s.settimeout(0.3)
     try:
@@ -1085,8 +1128,8 @@ class ProxyHandler(socketserver.StreamRequestHandler):
             if not url:
                 html = """<html><body>
 <h2>KingIPTV Proxy Active</h2>
-<p>Proxy funcionando na porta {}</p>
-</body></html>""".format(get_active_port()).encode("utf-8")
+<p>Proxy funcionando em {}:{}</p>
+</body></html>""".format(get_active_host(), get_active_port()).encode("utf-8")
                 self.send_response(200)
                 self.send_header('Content-Type', 'text/html; charset=utf-8')
                 self.send_header('Content-Length', str(len(html)))
@@ -1131,7 +1174,7 @@ def make_redirect_handler(target_port):
                     h = self.rfile.readline(65537)
                     if not h or h in (b"\r\n", b"\n"):
                         break
-                location = "http://127.0.0.1:{}{}".format(target_port, target)
+                location = "http://{}:{}{}".format(get_active_host(), target_port, target)
                 resp = (
                     "HTTP/1.1 302 Found\r\n"
                     "Location: {}\r\n"
@@ -1166,10 +1209,11 @@ class UnifiedServer:
             remaining.remove(preferred)
         random.shuffle(remaining)
         ordered.extend(remaining)
+        host = get_active_host()
         last_err = None
         for p in ordered:
             try:
-                server = ThreadedTCPServer(("127.0.0.1", p), ProxyHandler)
+                server = ThreadedTCPServer((host, p), ProxyHandler)
                 return server, p
             except OSError as e:
                 last_err = e
@@ -1180,11 +1224,12 @@ class UnifiedServer:
 
     def start_backup_redirects(self):
         handler_cls = make_redirect_handler(self.port)
+        host = get_active_host()
         for p in self.ports:
             if p == self.port:
                 continue
             try:
-                srv = ThreadedTCPServer(("127.0.0.1", p), handler_cls)
+                srv = ThreadedTCPServer((host, p), handler_cls)
                 srv.timeout = 1
             except OSError:
                 continue
