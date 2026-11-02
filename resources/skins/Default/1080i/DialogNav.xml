@@ -939,7 +939,7 @@
                     <height>200</height>
                     <texture>spinner_outer_ring.png</texture>
                     <aspectratio>keep</aspectratio>
-                    <animation effect="rotate" start="0" end="360" center="auto" time="4000" tween="linear" loop="true" condition="true">Conditional</animation>
+                    <animation effect="rotate" start="0" end="360" center="auto" time="2000" tween="linear" loop="true" condition="true">Conditional</animation>
                 </control>
 
                 <control type="image">
@@ -949,7 +949,7 @@
                     <height>136</height>
                     <texture>spinner_inner_ring.png</texture>
                     <aspectratio>keep</aspectratio>
-                    <animation effect="rotate" start="0" end="-360" center="auto" time="3000" tween="linear" loop="true" condition="true">Conditional</animation>
+                    <animation effect="rotate" start="0" end="-360" center="auto" time="1500" tween="linear" loop="true" condition="true">Conditional</animation>
                 </control>
             </control>
 
