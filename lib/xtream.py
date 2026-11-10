@@ -13,6 +13,7 @@ from requests.packages.urllib3.util.retry import Retry
 from lib.helper import *
 import re
 import time
+import unicodedata
 from urllib.parse import urlparse, parse_qs
 
 IPTV_PROBLEM_LOG = translate(os.path.join(profile, 'iptv_problems_log.txt'))
@@ -1087,6 +1088,16 @@ def parselist(url):
     except Exception as e:
         log_iptv_problem(url, 'Erro parselist: {}'.format(e))
     return iptv
+
+def normalize_search_text(text):
+    text = unicodedata.normalize('NFKD', text or '')
+    text = ''.join(c for c in text if not unicodedata.combining(c))
+    return text.lower().strip()
+
+def name_matches_query(name, query):
+    haystack = normalize_search_text(name)
+    words = normalize_search_text(query).split()
+    return bool(words) and all(w in haystack for w in words)
 
 class API:
     def __init__(self, dns, username, password, quality_mode='1080p'):
