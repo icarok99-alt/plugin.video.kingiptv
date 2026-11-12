@@ -8,6 +8,8 @@ import requests
 from urllib.parse import urlparse, quote_plus
 from lib import jsunpack
 
+TIMEOUT = 15
+
 
 class Resolver:
     FF_USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:128.0) Gecko/20100101 Firefox/128.0'
@@ -17,28 +19,164 @@ class Resolver:
     SAFARI_USER_AGENT = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 14_5) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Safari/605.1.15'
     ANDROID_USER_AGENT = 'Mozilla/5.0 (Linux; Android 14; SM-S918B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.6478.122 Mobile Safari/537.36'
     IOS_USER_AGENT = 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1'
-    USER_AGENTS = [FF_USER_AGENT, OPERA_USER_AGENT, EDGE_USER_AGENT, CHROME_USER_AGENT, SAFARI_USER_AGENT, ANDROID_USER_AGENT, IOS_USER_AGENT]
-    _headers = {
-        'User-Agent': CHROME_USER_AGENT,
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
-        'Accept-Language': 'pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7',
-        'sec-ch-ua': '"Not/A)Brand";v="8", "Chromium";v="126", "Google Chrome";v="126"',
-        'sec-ch-ua-mobile': '?0',
-        'sec-ch-ua-platform': '"Windows"',
-        'Sec-Fetch-Dest': 'document',
-        'Sec-Fetch-Mode': 'navigate',
-        'Sec-Fetch-Site': 'none',
-        'Sec-Fetch-User': '?1',
-        'Upgrade-Insecure-Requests': '1'
-    }
+    # Apenas UAs desktop: UAs mobile podem devolver paginas/players diferentes
+    USER_AGENTS = [FF_USER_AGENT, EDGE_USER_AGENT, CHROME_USER_AGENT]
+
+    DOC_ACCEPT = 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7'
+    ACCEPT_LANGUAGE = 'pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7'
+
+    # ------------------------------------------------------------------ headers
 
     @classmethod
     def rand_ua(cls):
         return random.choice(cls.USER_AGENTS)
 
     @classmethod
+    def build_headers(cls, user_agent=None, referer=None):
+        """Headers de navegacao (paginas HTML), coerentes com o User-Agent."""
+        ua = user_agent or cls.CHROME_USER_AGENT
+        headers = {
+            'User-Agent': ua,
+            'Accept': cls.DOC_ACCEPT,
+            'Accept-Language': cls.ACCEPT_LANGUAGE,
+            'Upgrade-Insecure-Requests': '1',
+            'Sec-Fetch-Dest': 'document',
+            'Sec-Fetch-Mode': 'navigate',
+            'Sec-Fetch-Site': 'cross-site' if referer else 'none',
+            'Sec-Fetch-User': '?1',
+        }
+        if referer:
+            headers['Referer'] = referer
+        # Client hints so existem em navegadores Chromium
+        match = re.search(r'Chrome/(\d+)', ua)
+        if match:
+            version = match.group(1)
+            brand = 'Microsoft Edge' if 'Edg/' in ua else 'Google Chrome'
+            headers['sec-ch-ua'] = '"Not/A)Brand";v="8", "Chromium";v="{0}", "{1}";v="{0}"'.format(version, brand)
+            headers['sec-ch-ua-mobile'] = '?0'
+            headers['sec-ch-ua-platform'] = '"Windows"'
+        return headers
+
+    @classmethod
+    def media_headers(cls, user_agent, referer=None, origin=None):
+        """Headers enxutos para o player usar na reproducao do stream."""
+        headers = {
+            'User-Agent': user_agent or cls.CHROME_USER_AGENT,
+            'Accept': '*/*',
+            'Accept-Language': cls.ACCEPT_LANGUAGE,
+        }
+        if referer:
+            headers['Referer'] = referer
+        if origin:
+            headers['Origin'] = origin
+        return headers
+
+    @classmethod
     def append_headers(cls, headers):
         return '|%s' % '&'.join(['%s=%s' % (key, quote_plus(headers[key])) for key in headers])
+
+    # ------------------------------------------------------------------ http
+
+    @classmethod
+    def get_text(cls, url, headers, timeout=TIMEOUT, retries=2):
+        for attempt in range(retries):
+            try:
+                r = requests.get(url, headers=headers, timeout=timeout, allow_redirects=True)
+                if r.status_code >= 400:
+                    return '', r
+                return r.text, r
+            except requests.RequestException:
+                if attempt + 1 < retries:
+                    time.sleep(0.5)
+        return '', None
+
+    @classmethod
+    def final_url(cls, url, headers):
+        """Segue redirects ate a URL final (tenta HEAD e cai para GET com Range)."""
+        try:
+            r = requests.head(url, headers=headers, allow_redirects=True, timeout=TIMEOUT)
+            if r.status_code < 400 and r.url:
+                return r.url
+        except requests.RequestException:
+            pass
+        r = None
+        try:
+            h = dict(headers)
+            h['Range'] = 'bytes=0-0'
+            r = requests.get(url, headers=h, stream=True, allow_redirects=True, timeout=TIMEOUT)
+            if r.status_code < 400:
+                return r.url
+        except requests.RequestException:
+            pass
+        finally:
+            if r is not None:
+                r.close()
+        return ''
+
+    @classmethod
+    def last_url(cls, url, headers):
+        return cls.final_url(url, headers)
+
+    # ------------------------------------------------------------------ verificacao
+
+    @classmethod
+    def _looks_like_media(cls, chunk, content_type):
+        start = chunk.lstrip()[:32].lower()
+        if start.startswith(b'#extm3u'):
+            return True
+        if start.startswith((b'<!doctype', b'<html', b'<head', b'<body', b'<?xml', b'<script', b'{', b'[')):
+            return False
+        if chunk[4:8] in (b'ftyp', b'moov', b'mdat', b'free', b'wide', b'styp', b'skip'):
+            return True
+        if chunk.startswith((b'\x1a\x45\xdf\xa3', b'FLV', b'ID3', b'OggS', b'RIFF')):
+            return True
+        if chunk[:1] == b'\x47' and (len(chunk) <= 188 or chunk[188:189] == b'\x47'):
+            return True
+        media_types = ('video/', 'audio/', 'application/octet-stream', 'binary/octet-stream',
+                       'application/vnd.apple.mpegurl', 'application/x-mpegurl', 'application/mp4')
+        return any(content_type.startswith(t) for t in media_types)
+
+    @classmethod
+    def verify_stream(cls, url, headers, timeout=TIMEOUT):
+        """Confirma que a URL entrega midia de verdade (e nao uma pagina de erro/HTML/JSON)."""
+        if not url:
+            return False
+        r = None
+        try:
+            h = dict(headers)
+            h['Range'] = 'bytes=0-8191'
+            r = requests.get(url, headers=h, stream=True, timeout=timeout, allow_redirects=True)
+            if r.status_code not in (200, 206):
+                return False
+            content_type = r.headers.get('Content-Type', '').split(';')[0].strip().lower()
+            if content_type in ('text/html', 'application/json', 'application/xhtml+xml'):
+                return False
+            chunk = b''
+            for part in r.iter_content(chunk_size=2048):
+                chunk += part
+                if len(chunk) >= 2048:
+                    break
+            if not chunk:
+                return False
+            is_playlist = chunk.lstrip().startswith(b'#EXTM3U')
+            length = r.headers.get('Content-Length', '')
+            if r.status_code == 200 and length.isdigit() and int(length) < 2048 and not is_playlist:
+                return False
+            return cls._looks_like_media(chunk, content_type)
+        except Exception:
+            return False
+        finally:
+            if r is not None:
+                r.close()
+
+    @classmethod
+    def finalize(cls, candidate, headers):
+        """Retorna 'url|headers' somente se o link estiver reproduzivel."""
+        if candidate and cls.verify_stream(candidate, headers):
+            return candidate + cls.append_headers(headers)
+        return ''
+
+    # ------------------------------------------------------------------ utilitarios
 
     @classmethod
     def get_packed_data(cls, html):
@@ -56,71 +194,39 @@ class Resolver:
                     for r in t:
                         if jsunpack.detect(r):
                             packed_data += jsunpack.unpack(r)
-        except:
+        except Exception:
             pass
         return packed_data
-
-    @classmethod
-    def last_url(cls, url, headers):
-        stream = ''
-        try:
-            r = requests.head(url, headers=headers, allow_redirects=True)
-            stream = r.url
-        except:
-            pass
-        return stream
-
-    @classmethod
-    def verify_stream(cls, url, headers, timeout=10):
-        if not url:
-            return False
-        try:
-            h = dict(headers)
-            h['Range'] = 'bytes=0-8191'
-            r = requests.get(url, headers=h, stream=True, timeout=timeout, allow_redirects=True)
-            try:
-                status_ok = r.status_code in (200, 206)
-                content_type = r.headers.get('Content-Type', '').lower()
-                looks_like_html = 'text/html' in content_type
-                if not status_ok or looks_like_html:
-                    return False
-                chunk = next(r.iter_content(chunk_size=1024), b'')
-                return len(chunk) > 0
-            finally:
-                r.close()
-        except:
-            return False
 
     @classmethod
     def dood_decode(cls, data):
         t = string.ascii_letters + string.digits
         return data + ''.join([random.choice(t) for _ in range(10)])
 
+    # ------------------------------------------------------------------ resolvers
+
     @classmethod
     def resolve_doodstream(cls, url, referer):
-        stream = ''
         try:
-            try:
-                url = url.split('?')[0]
-            except:
-                pass
+            url = url.split('?')[0]
             parsed_uri = urlparse(url)
             host = parsed_uri.netloc.replace('www.', '')
             media_id = url.rstrip('/').split('/')[-1]
             keep_hosts = ['doodstream.com', 'myvidplay.com', 'playmogo.com']
             if host not in keep_hosts:
                 host = 'playmogo.com'
+            ua = cls.rand_ua()
             web_url = 'https://{0}/d/{1}'.format(host, media_id)
-            headers = {
-                'User-Agent': cls.rand_ua(),
-                'Referer': 'https://{0}/'.format(host)
-            }
-            r = requests.get(web_url, headers=headers, allow_redirects=True)
+            headers = cls.build_headers(ua, referer='https://{0}/'.format(host))
+
+            html, r = cls.get_text(web_url, headers)
+            if r is None:
+                return ''
             if r.url != web_url:
                 host = urlparse(r.url).netloc.replace('www.', '')
                 web_url = 'https://{0}/d/{1}'.format(host, media_id)
             headers['Referer'] = web_url
-            html = r.text
+
             match = re.search(r'<iframe\s*src="([^"]+)', html)
             if match:
                 iframe_url = match.group(1)
@@ -128,99 +234,103 @@ class Resolver:
                     iframe_url = 'https:' + iframe_url
                 elif iframe_url.startswith('/'):
                     iframe_url = 'https://{0}{1}'.format(host, iframe_url)
-                html = requests.get(iframe_url, headers=headers, allow_redirects=True).text
+                html, _ = cls.get_text(iframe_url, headers)
             else:
-                e_url = web_url.replace('/d/', '/e/')
-                html = requests.get(e_url, headers=headers, allow_redirects=True).text
+                html, _ = cls.get_text(web_url.replace('/d/', '/e/'), headers)
+            if not html:
+                return ''
+
             match = re.search(
                 r'''dsplayer\.hotkeys[^']+'([^']+).+?function\s*makePlay.+?return[^?]+([^"]+)''',
                 html, re.DOTALL
             )
-            if match:
-                token = match.group(2)
-                pass_url = match.group(1)
-                if pass_url.startswith('/'):
-                    pass_url = 'https://{0}{1}'.format(host, pass_url)
-                elif not pass_url.startswith('http'):
-                    pass_url = 'https://{0}/{1}'.format(host, pass_url.lstrip('/'))
-                html = requests.get(pass_url, headers=headers, allow_redirects=True).text
-                if 'cloudflarestorage.' in html:
-                    vid_src = html.strip()
-                else:
-                    vid_src = cls.dood_decode(html) + token + str(int(time.time() * 1000))
-                headers.update({'Referer': web_url})
-                if cls.verify_stream(vid_src, headers):
-                    stream = vid_src + cls.append_headers(headers)
-        except:
+            if not match:
+                return ''
+            token = match.group(2)
+            pass_url = match.group(1)
+            if pass_url.startswith('/'):
+                pass_url = 'https://{0}{1}'.format(host, pass_url)
+            elif not pass_url.startswith('http'):
+                pass_url = 'https://{0}/{1}'.format(host, pass_url.lstrip('/'))
+
+            html, _ = cls.get_text(pass_url, headers)
+            if not html:
+                return ''
+            if 'cloudflarestorage.' in html:
+                vid_src = html.strip()
+            else:
+                vid_src = cls.dood_decode(html) + token + str(int(time.time() * 1000))
+
+            for ref in (web_url, 'https://{0}/'.format(host)):
+                play_headers = cls.media_headers(ua, referer=ref)
+                stream = cls.finalize(vid_src, play_headers)
+                if stream:
+                    return stream
+        except Exception:
             pass
-        return stream
+        return ''
 
     @classmethod
     def resolve_mixdrop(cls, url, referer):
-        stream = ''
         try:
-            url = url.replace('.club', '.co')
+            url = url.replace('.club', '.co').split('?')[0]
+            ua = cls.rand_ua()
             try:
-                url = url.split('?')[0]
-            except:
+                r = requests.head(url, headers={'User-Agent': ua}, allow_redirects=True, timeout=TIMEOUT)
+                if r.status_code < 400:
+                    url = r.url
+            except requests.RequestException:
                 pass
-            user_agent = cls.rand_ua()
-            try:
-                r = requests.head(url, headers={'User-Agent': user_agent}, allow_redirects=True)
-                url = r.url
-            except:
-                pass
-            parsed_uri = urlparse(url)
-            host = parsed_uri.netloc
-            rurl = 'https://{0}/'.format(host)
-            if referer:
-                rurl = referer
-            headers = {
-                'Origin': rurl.rstrip('/'),
-                'Referer': rurl,
-                'User-Agent': user_agent
-            }
-            html = requests.get(url, headers=headers, allow_redirects=True).text
+
+            host = urlparse(url).netloc
+            rurl = referer or 'https://{0}/'.format(host)
+            headers = cls.build_headers(ua, referer=rurl)
+            headers['Origin'] = rurl.rstrip('/')
+
+            html, _ = cls.get_text(url, headers)
+            if not html:
+                return ''
             r = re.search(r'''location\s*=\s*["']([^'"]+)''', html)
             if r:
                 url = 'https://{0}{1}'.format(host, r.group(1))
-                html = requests.get(url, headers=headers, allow_redirects=True).text
+                html, _ = cls.get_text(url, headers)
+                if not html:
+                    return ''
             if '(p,a,c,k,e,d)' in html:
                 html = cls.get_packed_data(html)
+
             r = re.search(r'(?:vsr|wurl|surl)[^=]*=\s*"([^"]+)', html)
-            if r:
-                surl = r.group(1)
-                if surl.startswith('//'):
-                    surl = 'https:' + surl
-                headers.pop('Origin', None)
-                headers.update({'Referer': url})
-                if cls.verify_stream(surl, headers):
-                    stream = surl + cls.append_headers(headers)
-        except:
+            if not r:
+                return ''
+            surl = r.group(1)
+            if surl.startswith('//'):
+                surl = 'https:' + surl
+            play_headers = cls.media_headers(ua, referer=url)
+            return cls.finalize(surl, play_headers)
+        except Exception:
             pass
-        return stream
+        return ''
 
     @classmethod
     def resolve_streamtape(cls, url, referer):
-        stream = ''
         try:
+            ua = cls.rand_ua()
             correct_url = url.replace('/v/', '/e/')
-            try:
-                r = requests.head(correct_url, headers=cls._headers, allow_redirects=True)
-                correct_url = r.url
-            except:
-                pass
+            resolved = cls.final_url(correct_url, cls.build_headers(ua, referer=referer or None))
+            if resolved:
+                correct_url = resolved
+
             parsed_uri = urlparse(correct_url)
-            protocol = parsed_uri.scheme
-            host = parsed_uri.netloc
             if not referer:
-                referer = '{0}://{1}/'.format(protocol, host)
-            headers = dict(cls._headers)
-            headers.update({
-                'User-Agent': cls.rand_ua(),
-                'Referer': referer
-            })
-            data = requests.get(correct_url, headers=headers, allow_redirects=True).text
+                referer = '{0}://{1}/'.format(parsed_uri.scheme, parsed_uri.netloc)
+            headers = cls.build_headers(ua, referer=referer)
+            play_headers = cls.media_headers(ua, referer=referer)
+
+            data, _ = cls.get_text(correct_url, headers)
+            if not data:
+                return ''
+
+            candidate = ''
             src = re.findall(r'''ById\('.+?=\s*(["']//[^;<]+)''', data)
             if src:
                 src_url = ''
@@ -232,17 +342,13 @@ class Resolver:
                     p1 = p1[0]
                     p2 = 0
                     if 'substring' in part:
-                        subst = re.findall(r'substring\((\d+)', part)
-                        for sub in subst:
+                        for sub in re.findall(r'substring\((\d+)', part):
                             p2 += int(sub)
                     src_url += p1[p2:]
                 src_url += '&stream=1'
                 if src_url.startswith('//'):
                     src_url = 'https:' + src_url
-                last_stream = cls.last_url(src_url, headers=headers)
-                candidate_url = last_stream or src_url
-                if cls.verify_stream(candidate_url, headers):
-                    stream = candidate_url + cls.append_headers(headers)
+                candidate = src_url
             else:
                 link_part1_re = re.compile(r'<div.+?style="display:none;">(.*?)&token=.+?</div>').findall(data)
                 link_part2_re = re.compile(r"&token=(.*?)'").findall(data)
@@ -251,23 +357,25 @@ class Resolver:
                     part2 = link_part2_re[-1]
                     if 'streamtape' in part1:
                         part1 = part1.split('streamtape')[1]
-                        final = 'streamtape' + part1 + '&token=' + part2
-                        candidate = 'https://' + final + '&stream=1'
+                        candidate = 'https://streamtape' + part1 + '&token=' + part2 + '&stream=1'
                     elif 'get_video' in part1:
                         part1_1 = part1.split('get_video')[0].replace('/', '')
                         part1_2 = part1.split('get_video')[1]
-                        final = part1_1 + '/get_video' + part1_2 + '&token=' + part2
-                        candidate = 'https://' + final + '&stream=1'
-                    else:
-                        candidate = ''
-                    if candidate:
-                        last_stream = cls.last_url(candidate, headers=headers)
-                        candidate_url = last_stream or candidate
-                        if cls.verify_stream(candidate_url, headers):
-                            stream = candidate_url + cls.append_headers(headers)
-        except:
+                        candidate = 'https://' + part1_1 + '/get_video' + part1_2 + '&token=' + part2 + '&stream=1'
+
+            if not candidate:
+                return ''
+            # Tenta a URL final (apos redirects) e, se falhar, a original
+            final = cls.final_url(candidate, play_headers)
+            for option in [u for u in (final, candidate) if u]:
+                stream = cls.finalize(option, play_headers)
+                if stream:
+                    return stream
+        except Exception:
             pass
-        return stream
+        return ''
+
+    # ------------------------------------------------------------------ roteamento
 
     @classmethod
     def resolverurls(cls, url, referer=''):
@@ -302,12 +410,15 @@ class Resolver:
             'streamtape.xyz', 'tapeblocker.com', 'streamnoads.com', 'tapeadvertisement.com',
             'tapeadsenjoyer.com', 'watchadsontape.com', 'tpead.net', 'advertape.net'
         ]
-        if domain in dood_domains or any(d in domain for d in ['dood', 'ds2play', 'ds2video', 'vidply', 'all3do', 'do7go', 'doodcdn', 'doply', 'vide0', 'vvide0', 'd-s.io', 'dsvplay', 'myvidplay', 'playmogo']):
-            stream = cls.resolve_doodstream(url, referer)
-        elif domain in mixdrop_domains or any(d in domain for d in ['mixdrop', 'mixdrp', 'mxdrop', 'm1xdrop', 'miixdrop']):
-            stream = cls.resolve_mixdrop(url, referer)
-        elif domain in streamtape_domains or any(d in domain for d in ['streamtape', 'strtape', 'strcloud', 'strtpe', 'scloud', 'stape', 'shavetape', 'adblocktape', 'antiadtape', 'tapeblocker', 'streamnoads', 'tapeadvertisement', 'tapeadsenjoyer', 'watchadsontape', 'tpead', 'advertape']):
-            stream = cls.resolve_streamtape(url, referer)
+        try:
+            if domain in dood_domains or any(d in domain for d in ['dood', 'ds2play', 'ds2video', 'vidply', 'all3do', 'do7go', 'doodcdn', 'doply', 'vide0', 'vvide0', 'd-s.io', 'dsvplay', 'myvidplay', 'playmogo']):
+                stream = cls.resolve_doodstream(url, referer)
+            elif domain in mixdrop_domains or any(d in domain for d in ['mixdrop', 'mixdrp', 'mxdrop', 'm1xdrop', 'miixdrop']):
+                stream = cls.resolve_mixdrop(url, referer)
+            elif domain in streamtape_domains or any(d in domain for d in ['streamtape', 'strtape', 'strcloud', 'strtpe', 'scloud', 'stape', 'shavetape', 'adblocktape', 'antiadtape', 'tapeblocker', 'streamnoads', 'tapeadvertisement', 'tapeadsenjoyer', 'watchadsontape', 'tpead', 'advertape']):
+                stream = cls.resolve_streamtape(url, referer)
+        except Exception:
+            stream = ''
         return stream, sub
 
 
